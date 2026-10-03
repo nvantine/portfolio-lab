@@ -71,4 +71,5 @@ def max_sharpe(
     expected_returns: pd.Series, covariance: pd.DataFrame, risk_free_rate: float = 0.0
 ) -> dict[str, float]:
     """Return long-only weights maximizing daily excess return per unit risk."""
-    raise NotImplementedError("Maximum Sharpe optimization is planned for a later phase")
+    from optimizer.advanced import allocation
+    return allocation(covariance, expected_returns - risk_free_rate, method="max_sharpe")["weights"]
