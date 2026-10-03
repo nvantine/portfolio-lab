@@ -2,4 +2,4 @@
 
 from django.urls import include, path
 
-urlpatterns = [path("", include("portfolio.urls"))]
+urlpatterns = [path("", include("portfolio.urls")), path("", include("django.contrib.auth.urls"))]

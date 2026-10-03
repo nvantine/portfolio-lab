@@ -1,6 +1,7 @@
-{% extends "portfolio/base.html" %}
-{% block content %}
-<h2>ETF portfolio research</h2>
-<p>Explore historical ETF prices and compare portfolio allocations.</p>
-<p class="note">The project scaffold is ready. Price refresh and optimization will arrive in the next phase.</p>
-{% endblock %}
+{% extends 'portfolio/base.html' %}{% block content %}
+<p class="note">Daily ETF research. Validation experiments are simulations; execution requires separate human approval on the paper session page.</p>
+<div class="grid"><section><h2>New experiment</h2><form method="post">{% csrf_token %}{{ form.as_p }}<button>Queue experiment</button></form></section><section><h2>Immutable datasets</h2>{% for dataset in datasets %}<p>{{ dataset.pk }} · {{ dataset.name }} · {{ dataset.manifest.aligned_rows }} sessions</p><details><summary>Manifest and digest</summary><pre>{{ dataset.manifest }}
+{{ dataset.digest }}</pre></details>{% empty %}<p>Freeze historical prices with the CLI, or create a synthetic demonstration dataset.</p>{% endfor %}
+<h2>Jobs</h2>{% for job in jobs %}<p>{{ job.kind }} · {{ job.status }} {% if job.kind == 'notebook' %}<a href="{% url 'notebook' job.pk %}">Review</a>{% endif %} {{ job.error }}</p>{% endfor %}</section></div>
+<h2>Experiment ledger</h2><table><tr><th>Created</th><th>Method</th><th>Window</th><th>Status</th></tr>{% for run in runs %}<tr><td><a href="{% url 'run' run.pk %}">{{ run.created_at }}</a></td><td>{{ run.config.method }}</td><td>{{ run.config.window }}</td><td>{{ run.status }}</td></tr>{% endfor %}</table>
+<h2>Methods and assumptions</h2>{% for method in methods %}<details><summary>{{ method.name }}</summary><div class="formula">{{ method.latex }}</div><p>{{ method.assumptions }}</p></details>{% endfor %}{% endblock %}

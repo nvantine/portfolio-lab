@@ -1,0 +1,1 @@
+{% extends 'portfolio/base.html' %}{% block content %}<h2>Operator login</h2><form method="post">{% csrf_token %}{{ form.as_p }}<input type="hidden" name="next" value="{{ next }}"><button>Log in</button></form>{% endblock %}
