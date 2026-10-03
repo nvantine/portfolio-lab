@@ -5,7 +5,7 @@ from decimal import Decimal, ROUND_DOWN
 
 from django.db import transaction
 from marketdata.universe import DEFAULT_ETFS
-from paper.models import PaperSession, PaperOrder
+from paper.models import PaperSession, PaperOrder, PaperDecision
 from research.models import Experiment
 from research.services import digest, materialize, provenance
 
@@ -36,7 +36,7 @@ def approve(run_id, user, budget=10000):
     if PaperOrder.objects.exclude(status__in=TERMINAL).exists():
         raise ValueError("Reconcile all earlier orders before approving a new session")
     current = provenance()
-    if any(run.provenance.get(key) != current[key] for key in ("source_digest", "lock_digest")):
+    if any(run.provenance.get(key) != current[key] for key in ("source_digest", "lock_digest", "versions", "python")):
         raise ValueError("Evaluator changed since this run. Rerun and review before approval")
     return PaperSession.objects.create(experiment=run, approved_by=user, fingerprint=fingerprint(run), budget=budget)
 
@@ -116,10 +116,12 @@ def _tick(session_id, broker, prices):
     if not session.active or session.revoked:
         raise ValueError("Paper session is paused or revoked")
     run = session.experiment
+    if run.status != "succeeded":
+        raise ValueError("Approved experiment is no longer successful")
     if fingerprint(run) != session.fingerprint:
         raise ValueError("Approval no longer matches the immutable experiment")
     current = provenance()
-    if any(run.provenance.get(key) != current[key] for key in ("source_digest", "lock_digest")):
+    if any(run.provenance.get(key) != current[key] for key in ("source_digest", "lock_digest", "versions", "python")):
         raise ValueError("Evaluator changed after approval; pause and review a new run")
     broker = broker or PaperBroker()
     if reconcile(session, broker):
@@ -189,13 +191,19 @@ def _tick(session_id, broker, prices):
     held_value = sum(p["value"] for p in state["positions"].values())
     if buy_total > state["cash"] or buy_total + held_value > session.budget + Decimal(".01"):
         raise ValueError("Paper cash or experiment budget is insufficient")
+    inputs = {"approval": session.fingerprint, "date": str(state["date"]),
+              "dates": [str(day.date()) for day in prices.index], "tickers": tickers,
+              "prices": prices.to_numpy().tolist(), "raw_closes": {key: str(value) for key, value in raw.items()},
+              "positions": {key: {field: str(value) for field, value in row.items()} for key, row in state["positions"].items()},
+              "cash": str(state["cash"]), "target_month": session.target_month}
+    decision, _ = PaperDecision.objects.get_or_create(digest=digest({"inputs": inputs, "targets": targets.to_dict()}), defaults={"session": session, "trading_date": state["date"], "inputs": inputs, "targets": targets.to_dict()})
     submitted = []
     for ticker, side, qty, price in instructions:
         session.refresh_from_db()
         if not session.active or session.revoked:
             break
         client_id = "pl-" + hashlib.sha256(f"{session.pk}:{state['date']}:{ticker}:{side}".encode()).hexdigest()[:40]
-        intent, created = PaperOrder.objects.get_or_create(client_order_id=client_id, defaults={"session": session, "trading_date": state["date"], "symbol": ticker, "side": side, "qty": qty, "limit_price": price})
+        intent, created = PaperOrder.objects.get_or_create(client_order_id=client_id, defaults={"session": session, "decision": decision, "trading_date": state["date"], "symbol": ticker, "side": side, "qty": qty, "limit_price": price})
         if not created:
             continue
         try:

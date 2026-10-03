@@ -21,8 +21,18 @@ class PaperSession(models.Model):
         constraints = [models.UniqueConstraint(fields=["slot"], condition=models.Q(revoked=False), name="one_unrevoked_paper_session")]
 
 
+class PaperDecision(models.Model):
+    created_at = models.DateTimeField(auto_now_add=True)
+    session = models.ForeignKey(PaperSession, on_delete=models.PROTECT)
+    trading_date = models.DateField()
+    digest = models.CharField(max_length=64, unique=True)
+    inputs = models.JSONField()
+    targets = models.JSONField()
+
+
 class PaperOrder(models.Model):
     session = models.ForeignKey(PaperSession, on_delete=models.PROTECT)
+    decision = models.ForeignKey(PaperDecision, null=True, on_delete=models.PROTECT)
     client_order_id = models.CharField(max_length=48, unique=True)
     trading_date = models.DateField()
     symbol = models.CharField(max_length=12)

@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 from paper.broker import PaperBroker
-from paper.models import PaperSession, PaperOrder
+from paper.models import PaperSession, PaperOrder, PaperDecision
 from paper.services import approve, fingerprint, stop, tick
 from research.models import Experiment
 from research.services import freeze_frame, provenance
@@ -81,6 +81,9 @@ def test_approval_idempotence_and_revocation(setup_paper):
     tick(session.pk, broker, frame)
     assert len(broker.submitted) == 6
     assert all(order.qty == 16 for order in PaperOrder.objects.all())
+    assert PaperDecision.objects.count() == 2
+    assert len(PaperDecision.objects.first().inputs["prices"]) == 400
+    assert all(order.decision_id for order in PaperOrder.objects.all())
     stop(session.pk, revoke=True, broker=broker)
     with pytest.raises(ValueError, match="paused or revoked"):
         tick(session.pk, broker, frame)

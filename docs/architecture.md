@@ -27,7 +27,7 @@ flowchart LR
 8. `portfolio_lab/cli.py`, `research/rpc.py`: JSON command interface and limited Unix socket capabilities. A remote client loads no Django settings or `.env`.
 9. `workers/isolation.py`, `workers/entry.py`: rootless runtime checks, fixed image ID, bounded protocol and disposable containers. Source registration only parses; execution always occurs in the container.
 10. `portfolio/views.py`, `portfolio/forms.py`, templates/static: authenticated thin service callers, Plotly JSON, local KaTeX, sanitized text review.
-11. `paper/broker.py`, `paper/services.py`: paper endpoint, approval fingerprint, stale-data gate, whole-share limit orders, durable intent, reconciliation and stop controls.
+11. `paper/broker.py`, `paper/services.py`: paper endpoint, approval fingerprint, stale-data gate, hashed decision input snapshots, whole-share limit orders, durable intent, reconciliation and stop controls. Orders reference immutable `PaperDecision` inputs.
 
 ## Deliberate boundaries
 

@@ -20,6 +20,8 @@ Historical research credentials remain in `.env` as `ALPACA_API_KEY` and `ALPACA
 
 Monthly mode reuses the first month's approved strategy targets during the month, allowing staged sells/buys to complete; daily mode recomputes targets each session. Whole-share rounding leaves cash. Prices are prior-session unadjusted IEX closes and are only limit references; fills are not assured. Markets must be open and every cached ETF must reach the prior exchange session. Missing daily bars block execution.
 
+Each evaluated paper decision freezes the adjusted history, raw limit references, existing positions, cash, targets and approval fingerprint in a hashed `PaperDecision` record. Orders reference that record. Refreshing the price cache therefore does not overwrite the inputs used to size an earlier paper order. Evaluator source, locked dependencies, actual library versions and Python version must match the reviewed experiment.
+
 ## Stop and investigate
 
 - **Pause** disables new intents immediately, waits for an in-flight cycle, reconciles and requests cancellation of known session orders. It does not sell holdings. A paused session requires revocation/new approval to resume.
