@@ -117,6 +117,7 @@ uv export --no-emit-project --no-hashes --format requirements-txt --output-file 
 ```
 
 - [Architecture and file walkthrough](docs/architecture.md)
+- [Project instructions for coding agents](AGENTS.md)
 - [Mathematics, timing, assumptions and limitations](docs/methodology.md)
 - [Hermes boundary and bounded research workflow](docs/hermes.md)
 - [Paper lifecycle and stop controls](docs/paper.md)
