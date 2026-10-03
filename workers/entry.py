@@ -13,7 +13,8 @@ import pandas as pd
 def notebook(payload):
     import nbformat
     from nbclient import NotebookClient
-    book = nbformat.from_dict(payload["notebook"])
+    # .ipynb files serialize multiline sources as arrays; reads rejoins them.
+    book = nbformat.reads(json.dumps(payload["notebook"]), as_version=4)
     nbformat.validate(book)
     # Remove all pre-existing outputs, including executable HTML/JS.
     for cell in book.cells:

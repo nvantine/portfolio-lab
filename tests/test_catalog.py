@@ -43,3 +43,30 @@ def test_black_litterman_view_moves_posterior():
     posterior = black_litterman(sigma, {"A": .5, "B": .5}, {"A": .01}, .00001)
     assert .00125 < posterior["A"] < .01
     assert posterior["B"] == pytest.approx(.00125)
+
+
+def test_maximum_sharpe_analytic_and_turnover_constraint():
+    sigma = pd.DataFrame(np.diag([.01, .04]), index=["A", "B"], columns=["A", "B"])
+    fit = allocation(sigma, pd.Series({"A": .1, "B": .2}), method="max_sharpe")
+    assert fit["weights"]["A"] == pytest.approx(2/3, abs=1e-5)
+    limited = allocation(sigma, current={"A": .5, "B": .5}, turnover_limit=.1)
+    assert limited["weights"]["A"] == pytest.approx(.55, abs=1e-5)
+
+
+def test_cvar_avoids_known_loss_scenarios():
+    scenarios = pd.DataFrame({"A": [-.1, -.1, .1, .1], "B": [0., 0., 0., 0.]})
+    sigma = scenarios.cov()
+    fit = allocation(sigma, method="cvar", scenarios=scenarios, confidence=.5)
+    assert fit["weights"]["B"] == pytest.approx(1, abs=1e-5)
+
+
+def test_quant_packages_have_no_django_imports():
+    import ast
+    from pathlib import Path
+    for folder in ("optimizer", "strategies", "backtest"):
+        for path in Path(folder).glob("*.py"):
+            for node in ast.walk(ast.parse(path.read_text())):
+                if isinstance(node, ast.ImportFrom):
+                    assert not (node.module or "").startswith("django")
+                elif isinstance(node, ast.Import):
+                    assert not any(alias.name.startswith("django") for alias in node.names)

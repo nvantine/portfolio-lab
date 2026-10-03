@@ -10,6 +10,9 @@ class Dataset(models.Model):
     snapshot = models.JSONField()
     manifest = models.JSONField(default=dict)
 
+    def __str__(self):
+        return f"{self.name} · snapshot {self.pk}"
+
 
 class StrategyVersion(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)

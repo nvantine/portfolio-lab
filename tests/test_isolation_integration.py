@@ -1,5 +1,6 @@
 """Explicit opt-in integration tests; never fall back to host execution."""
 import os
+import json
 import nbformat
 import pandas as pd
 import pytest
@@ -29,9 +30,12 @@ def target_weights(history, current_weights, parameters):
         assert worker.image_digest.startswith("sha256:")
 
 
-def test_notebook_executes_and_removes_rich_outputs():
+@pytest.mark.parametrize("serialized", [False, True])
+def test_notebook_executes_and_removes_rich_outputs(serialized):
     from workers.isolation import StrategyProcess
     book = nbformat.v4.new_notebook(cells=[nbformat.v4.new_code_cell('import pandas as pd\nfrom IPython.display import display, HTML\nprices = pd.read_csv("prices.csv")\nprint(len(prices))\ndisplay(HTML("<script>bad()</script>"))')])
+    if serialized:
+        book = json.loads(nbformat.writes(book))
     with StrategyProcess() as worker:
         result = worker.request({"action": "notebook", "notebook": book, "dates": ["2024-01-02", "2024-01-03"], "tickers": ["SPY"], "prices": [[100], [101]]})
     outputs = " ".join(result["cells"][0]["outputs"])

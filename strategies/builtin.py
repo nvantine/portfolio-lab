@@ -81,7 +81,7 @@ def target_weights(history, current_weights, parameters):
     n = len(prices.columns)
     means = returns.mean()
     if method == "black_litterman":
-        means = black_litterman(cov, dict.fromkeys(prices.columns, 1/n), parameters.get("views", {}), parameters.get("view_uncertainty", .0001))
+        means = black_litterman(cov, dict.fromkeys(prices.columns, 1/n), parameters.get("views", {}), parameters.get("view_uncertainty", .0001), tau=parameters.get("tau", .05))
     if method in ("min_variance", "mean_variance", "max_sharpe", "cvar", "robust", "black_litterman"):
         rf = (1+parameters.get("annual_risk_free_rate", 0))**(1/252)-1
         return allocation(cov, means-rf if method == "max_sharpe" else means, method=method, cap=cap,

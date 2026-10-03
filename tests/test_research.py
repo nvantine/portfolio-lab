@@ -92,3 +92,30 @@ def test_markdown_sanitized():
     from research.reporting import safe_markdown
     value = safe_markdown('<img src=x onerror=alert(1)><script>alert(1)</script> **ok**')
     assert "<script" not in value and "onerror" not in value and "<strong>ok</strong>" in value
+
+
+@pytest.mark.django_db
+def test_agent_daily_trial_budget(prices):
+    dataset = freeze_frame(prices)
+    Experiment.objects.bulk_create([Experiment(dataset=dataset, status="failed") for _ in range(24)])
+    with pytest.raises(ValueError, match="Daily"):
+        dispatch({"group": "experiments", "action": "run", "config": {"dataset": dataset.pk}}, agent=True)
+
+
+@pytest.mark.django_db
+def test_comparison_and_csrf(client, django_user_model):
+    client.force_login(django_user_model.objects.create_user(username="reviewer", is_staff=True))
+    assert client.get("/compare/").status_code == 200
+    assert client.get("/compare/?ids=invalid").status_code == 400
+    assert client.get("/paper/approve/1/").status_code == 405
+    from django.test import Client
+    strict = Client(enforce_csrf_checks=True)
+    strict.force_login(django_user_model.objects.get(username="reviewer"))
+    assert strict.post("/paper/approve/1/").status_code == 403
+
+
+@pytest.mark.parametrize("parameters", [{"lookback": 30.5}, {"cap": "0.2"}, {"confidence": 1}, {"cost_bps": -1}, {"target_volatility": 0}, {"views": {"SPY": "high"}}])
+def test_invalid_parameters_fail_before_queue(parameters):
+    from research.services import validate_config
+    with pytest.raises(ValueError):
+        validate_config({"dataset": 1, "parameters": parameters})

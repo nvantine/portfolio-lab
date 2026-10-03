@@ -1,6 +1,7 @@
 """Trusted application services shared by the operator UI and CLI."""
 import hashlib
 import json
+import math
 import subprocess
 from pathlib import Path
 
@@ -68,14 +69,17 @@ def register_strategy(name, source):
 
 
 def provenance():
+    import importlib.metadata
+    import platform
     root = settings.BASE_DIR
     revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True, check=False).stdout.strip()
     dirty = bool(subprocess.run(["git", "status", "--porcelain"], cwd=root, capture_output=True, text=True, check=False).stdout)
     lock = root / "uv.lock"
     # Also hash source so an uncommitted run still has an identifiable evaluator.
-    paths = sorted(p for folder in ("optimizer", "backtest", "strategies", "research", "workers") for p in (root / folder).rglob("*.py"))
+    paths = sorted(p for folder in ("optimizer", "backtest", "strategies", "research", "workers", "paper") for p in (root / folder).rglob("*.py"))
     code = hashlib.sha256(b"".join(str(p.relative_to(root)).encode() + p.read_bytes() for p in paths)).hexdigest()
-    return {"git_revision": revision, "dirty": dirty, "source_digest": code, "lock_digest": hashlib.sha256(lock.read_bytes()).hexdigest() if lock.exists() else "", "engine_schema": 1}
+    versions = {name: importlib.metadata.version(name) for name in ("django", "pandas", "numpy", "scipy", "cvxpy", "scikit-learn", "plotly", "alpaca-py", "nbclient", "nbformat")}
+    return {"git_revision": revision, "dirty": dirty, "source_digest": code, "lock_digest": hashlib.sha256(lock.read_bytes()).hexdigest() if lock.exists() else "", "python": platform.python_version(), "platform": platform.platform(), "versions": versions, "engine_schema": 1}
 
 
 def validate_config(config, agent=False):
@@ -89,17 +93,40 @@ def validate_config(config, agent=False):
         raise ValueError("Final holdout is reserved for the operator")
     if config.get("method", "min_variance") not in METHODS:
         raise ValueError("Unknown registered method")
+    if not isinstance(config.get("dataset"), int) or isinstance(config["dataset"], bool) or config["dataset"] <= 0:
+        raise ValueError("Supply an existing positive dataset ID")
+    seed = config.get("seed", 42)
+    if not isinstance(seed, int) or isinstance(seed, bool) or not 0 <= seed < 2**32:
+        raise ValueError("Seed must be an integer between 0 and 2^32-1")
+    if not isinstance(config.get("hypothesis", ""), str) or len(config.get("hypothesis", "")) > 4000:
+        raise ValueError("Hypothesis must be text under 4000 characters")
     parameters = dict(config.get("parameters", {}))
-    allowed = {"cap", "lookback", "covariance", "risk_aversion", "turnover_limit", "cost_bps", "robust_radius", "confidence", "views", "view_uncertainty", "tau", "lag", "ridge_alpha", "target_volatility", "rebalance"}
+    allowed = {"cap", "lookback", "covariance", "risk_aversion", "turnover_limit", "cost_bps", "robust_radius", "confidence", "views", "view_uncertainty", "tau", "ridge_alpha", "target_volatility", "rebalance"}
     if set(parameters) - allowed:
         raise ValueError("Unknown strategy parameters")
+    for key, value in parameters.items():
+        if key in {"covariance", "views", "rebalance"} or key == "turnover_limit" and value is None:
+            continue
+        if not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(value):
+            raise ValueError(f"{key} must be a finite number")
+        if value < 0 or key in {"cap", "confidence", "view_uncertainty", "tau", "target_volatility"} and value == 0:
+            raise ValueError(f"{key} is outside its permitted range")
+    if "lookback" in parameters and not isinstance(parameters["lookback"], int):
+        raise ValueError("Lookback must be an integer")
+    if not 0 < parameters.get("confidence", .95) < 1 or parameters.get("turnover_limit") is not None and not 0 <= parameters["turnover_limit"] <= 2:
+        raise ValueError("Confidence must be in (0, 1); turnover must be in [0, 2]")
+    if not 0 <= parameters.get("cost_bps", 10) <= 1000 or parameters.get("rebalance", "monthly") not in {"daily", "monthly"}:
+        raise ValueError("Costs must be 0–1000 bps; rebalance daily or monthly")
+    views = parameters.get("views", {})
+    if not isinstance(views, dict) or any(not isinstance(key, str) or not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(value) for key, value in views.items()):
+        raise ValueError("Views must map ticker names to finite daily return estimates")
     if parameters.get("covariance", "ledoit_wolf") not in COVARIANCES:
         raise ValueError("Unknown covariance estimator")
     if not 0 < float(parameters.get("cap", .2)) <= 1:
         raise ValueError("Position cap must be in (0, 1]")
     if not 10 <= int(parameters.get("lookback", 126)) <= 2520:
         raise ValueError("Lookback must be between 10 and 2520")
-    config.update(schema=1, seed=int(config.get("seed", 42)), window=config.get("window", "validation"), parameters=parameters, method=config.get("method", "min_variance"))
+    config.update(schema=1, seed=seed, window=config.get("window", "validation"), parameters=parameters, method=config.get("method", "min_variance"))
     return config
 
 
@@ -158,7 +185,7 @@ def run_experiment(run):
 
 def queue_notebook(dataset_id, notebook):
     import nbformat
-    nbformat.validate(nbformat.from_dict(notebook))
+    nbformat.validate(nbformat.reads(json.dumps(notebook), as_version=4))
     if len(json.dumps(notebook)) > 1_000_000:
         raise ValueError("Notebook exceeds 1 MB")
     dataset = Dataset.objects.get(pk=dataset_id)
