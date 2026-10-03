@@ -5,3 +5,10 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .coverage
+artifacts/
+*.egg-info/
+*.sock
+.env.*
+!.env.example
+!.env.paper.example
+.dockerignore.tmp

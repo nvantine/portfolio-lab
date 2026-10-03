@@ -1,0 +1,11 @@
+*
+!requirements.txt
+!workers/
+!workers/**
+!optimizer/
+!optimizer/**
+!strategies/
+!strategies/**
+!backtest/
+!backtest/**
+**/__pycache__

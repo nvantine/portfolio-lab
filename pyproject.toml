@@ -1,0 +1,25 @@
+[project]
+name = "portfolio-lab"
+version = "0.2.0"
+description = "Reproducible ETF research and isolated paper-strategy laboratory"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+  "django==6.1.1", "pandas==3.0.6", "numpy==2.5.3", "scipy==1.18.1",
+  "cvxpy==1.9.3", "scikit-learn==1.9.1", "plotly==7.1.0",
+  "alpaca-py==0.44.0", "python-dotenv==1.2.4", "pytest==9.1.1",
+  "pytest-django==4.14.0", "nbclient>=0.10,<1", "nbformat>=5,<6",
+  "markdown>=3,<4", "bleach>=6,<7", "ipykernel>=6,<8",
+]
+
+[project.scripts]
+portfolio-lab = "portfolio_lab.cli:main"
+
+[build-system]
+requires = ["setuptools>=84"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["portfolio_lab*", "portfolio*", "marketdata*", "optimizer*", "research*", "strategies*", "backtest*", "paper*", "workers*"]
+
+[tool.setuptools.package-data]
+portfolio = ["templates/**/*.html", "static/**/*"]
