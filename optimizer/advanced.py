@@ -35,7 +35,7 @@ def allocation(covariance, means=None, *, method="min_variance", cap=1.0, risk_a
         threshold = cp.Variable()
         loss = threshold + cp.sum(cp.pos(-values@w-threshold))/((1-confidence)*len(values))
     elif method == "max_sharpe":
-        if mu.max() <= 0 or current is not None:
+        if mu.max() <= 0 or current is not None or turnover_limit is not None:
             raise ValueError("Maximum Sharpe requires positive excess returns and no turnover penalty")
         y, scale = cp.Variable(n), cp.Variable(nonneg=True)
         transformed = cp.Problem(cp.Minimize(cp.quad_form(y, cp.psd_wrap(sigma))),
