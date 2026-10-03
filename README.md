@@ -1,97 +1,125 @@
 # Portfolio Lab
 
-A small Django research app for historical ETF data and portfolio optimization. Phase 2 adds read-only Alpaca price caching and a pure Python optimization package. The web pages still show placeholders; dashboard charts and saved runs come in Phase 3.
+A single-user Django laboratory for daily ETF allocation, reproducible quant experiments, mathematical explanations, isolated agent research and human-approved **Alpaca paper** execution.
 
-## Start locally
+## Start
 
-Requires [uv](https://docs.astral.sh/uv/) and Python 3.13. Django 6.1 supports Python 3.12 through 3.14; this project uses 3.13 for its pinned dependency set. From this directory:
-
-```bash
-uv venv --python 3.13 .venv
-uv pip sync requirements.txt --python .venv/bin/python
-uv run --no-project --python .venv/bin/python manage.py migrate
-uv run --no-project --python .venv/bin/python manage.py runserver
-```
-
-Open <http://127.0.0.1:8000/>. The home and results pages work without Alpaca credentials. Stop the server with Ctrl+C.
-
-Run the tests with:
+Requires uv and Python 3.13. All Python environment and execution commands use uv.
 
 ```bash
-uv run --no-project --python .venv/bin/python -m pytest
+uv sync --locked
+uv run python manage.py migrate
+uv run python manage.py createsuperuser
+uv run python manage.py runserver 127.0.0.1:8000
 ```
 
-`requirements.in` lists the direct dependencies. `requirements.txt` pins the full resolved dependency tree. After changing `requirements.in`, regenerate and install it with:
+Log in at http://127.0.0.1:8000/. Use an SSH tunnel for remote access; keep the development server on loopback. Set a private random `DJANGO_SECRET_KEY` in `.env`; never use the example placeholder. No operator password is pre-created.
+
+In a second terminal, process the durable job queue:
 
 ```bash
-uv pip compile requirements.in -o requirements.txt --python-version 3.13
-uv pip sync requirements.txt --python .venv/bin/python
+uv run portfolio-lab jobs work
 ```
 
-## Alpaca credentials
+## First experiment without API keys
 
-1. Copy the template in the project root: `cp .env.example .env`.
-2. Open the new `portfolio-lab/.env` file in your local editor.
-3. Replace `your_alpaca_api_key_here` after `ALPACA_API_KEY=` with your key.
-4. Replace `your_alpaca_secret_key_here` after `ALPACA_SECRET_KEY=` with your secret.
-5. Save the file. Never paste either value into a chat or commit `.env`.
-6. Confirm both variables loaded without showing either value:
+```bash
+uv run portfolio-lab datasets demo
+# Set examples/min-variance.json dataset to the returned ID if it is not 1.
+uv run portfolio-lab experiments run examples/min-variance.json
+uv run portfolio-lab jobs work --once
+uv run portfolio-lab runs list
+```
+
+The synthetic dataset is labeled and cannot be approved for paper execution. The dashboard queues the same jobs as the CLI. Review allocations, cash, drift, growth/drawdown, equal-weight/SPY comparisons, rolling volatility, covariance, frontier, duals, metrics, bootstrap intervals and physical simulations. Formula cards render using local KaTeX; Plotly also loads locally.
+
+## Historical Alpaca data
+
+1. Copy `.env.example` to `.env` only if `.env` does not already exist; keep existing credentials.
+2. Edit locally and set `ALPACA_API_KEY` and `ALPACA_SECRET_KEY`. Never paste keys in chat or commit `.env`.
+3. Set `DJANGO_SECRET_KEY` to a locally generated random secret and run `chmod 600 .env`.
+4. Check loading without printing values:
 
    ```bash
-   uv run --no-project --python .venv/bin/python manage.py shell -c 'from django.conf import settings; print("Key loaded:", bool(settings.ALPACA_API_KEY), "Secret loaded:", bool(settings.ALPACA_SECRET_KEY))'
+   uv run python manage.py shell -c 'from django.conf import settings; print("Key loaded:", bool(settings.ALPACA_API_KEY), "Secret loaded:", bool(settings.ALPACA_SECRET_KEY))'
    ```
 
-7. Check the historical bars connection without saving prices:
+5. Verify historical bars:
 
    ```bash
-   uv run --no-project --python .venv/bin/python manage.py refresh_prices --check-connection
+   uv run python manage.py refresh_prices --check-connection
    ```
 
-The connection check requests recent **daily SPY bars** using `DataFeed.IEX` and `Adjustment.ALL`. IEX is explicitly chosen because it is the stock feed available on Alpaca's free Basic plan; `ALL` adjusts for splits and dividends. IEX covers one exchange, so its bars can differ from consolidated SIP bars. The application only uses Alpaca's historical stock data client.
+6. Refresh and freeze:
 
-## Refresh prices
+   ```bash
+   uv run portfolio-lab data refresh
+   uv run portfolio-lab datasets freeze SPY QQQ IWM EFA EEM AGG TLT LQD HYG GLD VNQ XLE XLK XLV XLF DBC
+   ```
 
-Fetch the editable default universe in `marketdata/universe.py` for the last two years through yesterday:
+The editable universe is in `marketdata/universe.py`. Daily bars explicitly use IEX and adjustment ALL (splits/dividends); only common observed dates enter a snapshot, with no forward fill. IEX venue coverage differs from SIP. Paper sizing separately requests RAW historical bars, never uses adjusted prices for order limits.
+
+## CLI
 
 ```bash
-uv run --no-project --python .venv/bin/python manage.py refresh_prices
+uv run portfolio-lab methods list
+uv run portfolio-lab experiments sweep examples/sweep.json
+uv run portfolio-lab jobs status JOB_ID
+uv run portfolio-lab runs show RUN_ID
+uv run portfolio-lab runs compare RUN_ID OTHER_RUN_ID
+uv run portfolio-lab reports export RUN_ID --output report.md
+uv run portfolio-lab strategies register examples/strategy.py --name equal-weight-example
+uv run portfolio-lab notebooks run examples/covariance.ipynb --dataset DATASET_ID
+uv run portfolio-lab paper status
 ```
 
-Or fetch named ETFs over an inclusive date range:
+Experiment configs are JSON with schema, dataset ID, method, optional strategy hash, seed, hypothesis, window and parameters. `window` defaults to validation; only an operator may request final holdout. A registered strategy defines `target_weights(history, current_weights, parameters)` and executes only in the isolated worker. All trials—including failures—remain in SQLite.
+
+## Isolated generated code
+
+Install rootless Docker using its official documented setup. Require rootless mode, systemd/cgroup v2 and actual CPU/memory/swap/PID limits. There is no rootful fallback.
 
 ```bash
-uv run --no-project --python .venv/bin/python manage.py refresh_prices SPY QQQ AGG --start 2025-01-01 --end 2025-12-31
+docker info --format '{{.SecurityOptions}} {{.CgroupVersion}} {{.CgroupDriver}}'
+docker build -f workers/Dockerfile -t portfolio-lab-worker:0.2 .
 ```
 
-Each ticker is requested separately so the command identifies a failing or empty ticker. A repeat refresh updates existing `(asset, date)` rows instead of adding duplicates. API failures are reported without displaying credentials or response bodies. No bar is invented for a missing date or an ETF that started later. The cached-price loader uses only dates shared by all requested ETFs and requires at least three common price dates.
+If registry/package downloads are slow and `uv sync --locked` has already populated the local cache, use `uv run python -m workers.build_image --cached`. It creates a fresh dependency-only build context using `uv pip sync --offline` and the same Docker recipe. Runtime restrictions are identical; the resulting image ID is recorded per job.
 
-## Optimization methods
+Build context explicitly excludes `.env`, database and books. Runtime containers have no network, credentials or host mounts. They run as an unprivileged user with a read-only filesystem, resource/time bounds and training/prefix data via stdin. Notebooks are executed then reviewed as escaped plain text; they are not interactive notebooks. See [Hermes setup and prompt](docs/hermes.md). Configure separate OS users on the server before scheduling an autonomous agent; no Hermes cron task is enabled here.
 
-`optimizer/` accepts pandas inputs and has no Django imports. Supply a DataFrame of aligned **daily returns** to a covariance estimator; missing or non-finite values cause a clear error. The sample estimator uses pandas sample covariance. The Ledoit–Wolf estimator uses scikit-learn shrinkage and returns the same ticker labels.
+## Paper operator approval
 
-Both optimizers return a ticker-to-weight dictionary with nonnegative weights summing to one. Minimum variance minimizes `wᵀΣw`. Mean-variance maximizes `μᵀw − λwᵀΣw`, where `μ` and `Σ` use daily units and `λ` is a nonnegative risk-aversion input. `max_sharpe` and the risk metrics remain placeholders for later phases.
+See [paper credential and approval steps](docs/paper.md). Separate `.env.paper` credentials, authenticated review, immutable approval fingerprint, allowlist, no leverage, $10,000 maximum budget and 20% position cap are required. Open/partial orders and uncertain submissions block new work. Pause/revoke requests cancellation and retains positions. The endpoint is permanently paper; no live mode exists. No execution approval or trading credentials are created automatically.
 
-## Code map
+## Verification
 
-- `portfolio_lab/`: Django settings, environment loading, and URL routing.
-- `marketdata/`: ETF and daily adjusted price models, editable default ticker list, historical bars fetch, SQLite cache, and shared-date alignment.
-- `portfolio/`: saved optimization run model, placeholder views, and templates.
-- `optimizer/`: Django-independent covariance estimators and CVXPY optimizers, plus later-phase risk metric placeholders.
-- `tests/`: mocked fetch/cache checks, date alignment, optimizer validation, SciPy comparison, and page rendering.
+```bash
+uv run pytest -q
+uv run python manage.py check
+uv run python manage.py makemigrations --check --dry-run
+```
 
-`OptimizationRun` includes `parameters`, `input_snapshot`, and `results` JSON fields so future runs can store their exact inputs and outputs. SQLite is for local research; `db.sqlite3` and `.env` are ignored by Git.
+Rootless integration tests are opt-in after building the image:
 
-## Next phase
+```bash
+LAB_TEST_CONTAINERS=1 uv run pytest tests/test_isolation_integration.py -q
+```
 
-Build the results page with a weights chart, efficient frontier, risk metrics, and a simple equal-weight comparison. Save each run's parameters, input snapshot, and outputs in `OptimizationRun`.
+## Dependencies and reading guide
 
-## API references
+`pyproject.toml` is the direct dependency source; `uv.lock` is canonical. `requirements.txt` is the fully pinned portable export. After intentional dependency changes:
 
-- [Django 6.1 models and migrations](https://docs.djangoproject.com/en/6.1/intro/overview/)
-- [Alpaca historical stock client](https://alpaca.markets/sdks/python/api_reference/data/stock/historical.html)
-- [Alpaca stock bars request](https://alpaca.markets/sdks/python/api_reference/data/stock/requests.html)
-- [Alpaca feed and adjustment enums](https://alpaca.markets/sdks/python/api_reference/data/enums.html)
-- [Alpaca Basic market data coverage](https://docs.alpaca.markets/us/docs/about-market-data-api)
-- [CVXPY quadratic programming example](https://www.cvxpy.org/examples/basic/quadratic_program.html)
-- [scikit-learn LedoitWolf](https://scikit-learn.org/stable/modules/generated/sklearn.covariance.LedoitWolf.html)
-- [SciPy SLSQP](https://docs.scipy.org/doc/scipy/reference/optimize.minimize-slsqp.html)
+```bash
+uv lock
+uv sync --locked
+uv export --no-emit-project --no-hashes --format requirements-txt --output-file requirements.txt
+```
+
+- [Architecture and file walkthrough](docs/architecture.md)
+- [Mathematics, timing, assumptions and limitations](docs/methodology.md)
+- [Hermes boundary and bounded research workflow](docs/hermes.md)
+- [Paper lifecycle and stop controls](docs/paper.md)
+- Local original book notes: `~/Library/math/markdown/portfolio-lab-index.md` (Boyd, Shreve I/II, ISLP, Casella–Berger; selected passages, source hashes, examples and code/test links).
+
+`optimizer/`, `strategies/` and `backtest/` import no Django. `research/` is the shared experiment application layer; `marketdata/` caches prices; `portfolio/` renders operator pages; `workers/` isolates source; `paper/` handles approved paper orders. The original `portfolio.OptimizationRun` model is retained for migration compatibility; the expanded experiment ledger is `research.Experiment`, with related immutable snapshots and source versions. SQLite, artifacts and secrets remain local and ignored.

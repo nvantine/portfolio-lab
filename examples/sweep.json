@@ -1,0 +1,35 @@
+[
+  {
+    "schema": 1,
+    "dataset": 1,
+    "method": "equal_weight",
+    "seed": 42,
+    "parameters": {
+      "lookback": 126,
+      "cap": 0.2,
+      "cost_bps": 10
+    }
+  },
+  {
+    "schema": 1,
+    "dataset": 1,
+    "method": "inverse_volatility",
+    "seed": 42,
+    "parameters": {
+      "lookback": 126,
+      "cap": 0.2,
+      "cost_bps": 10
+    }
+  },
+  {
+    "schema": 1,
+    "dataset": 1,
+    "method": "min_variance",
+    "seed": 42,
+    "parameters": {
+      "lookback": 126,
+      "cap": 0.2,
+      "cost_bps": 10
+    }
+  }
+]

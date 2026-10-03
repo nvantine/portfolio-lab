@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "dataset": 1,
+  "method": "min_variance",
+  "window": "validation",
+  "seed": 42,
+  "hypothesis": "Covariance shrinkage and position caps reduce estimated volatility compared with equal weight.",
+  "parameters": {
+    "covariance": "ledoit_wolf",
+    "lookback": 126,
+    "cap": 0.2,
+    "cost_bps": 10,
+    "rebalance": "monthly"
+  }
+}
