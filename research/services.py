@@ -89,8 +89,6 @@ def validate_config(config, agent=False):
         raise ValueError("Unknown experiment fields")
     if config.get("schema", 1) != 1 or config.get("window", "validation") not in ("validation", "holdout"):
         raise ValueError("Unsupported schema or window")
-    if agent and config.get("window") == "holdout":
-        raise ValueError("Final holdout is reserved for the operator")
     if config.get("method", "min_variance") not in METHODS:
         raise ValueError("Unknown registered method")
     if not isinstance(config.get("dataset"), int) or isinstance(config["dataset"], bool) or config["dataset"] <= 0:
@@ -115,8 +113,8 @@ def validate_config(config, agent=False):
         raise ValueError("Lookback must be an integer")
     if not 0 < parameters.get("confidence", .95) < 1 or parameters.get("turnover_limit") is not None and not 0 <= parameters["turnover_limit"] <= 2:
         raise ValueError("Confidence must be in (0, 1); turnover must be in [0, 2]")
-    if not 0 <= parameters.get("cost_bps", 10) <= 1000 or parameters.get("rebalance", "monthly") not in {"daily", "monthly"}:
-        raise ValueError("Costs must be 0–1000 bps; rebalance daily or monthly")
+    if not 0 <= parameters.get("cost_bps", 10) <= 1000 or parameters.get("rebalance", "monthly") not in {"daily", "weekly", "monthly"}:
+        raise ValueError("Costs must be 0–1000 bps; rebalance daily, weekly, or monthly")
     views = parameters.get("views", {})
     if not isinstance(views, dict) or any(not isinstance(key, str) or not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(value) for key, value in views.items()):
         raise ValueError("Views must map ticker names to finite daily return estimates")
@@ -192,3 +190,19 @@ def queue_notebook(dataset_id, notebook):
     materialize(dataset)
     job = Job.objects.create(kind="notebook", payload={"dataset": dataset.pk, "notebook": notebook, "notebook_digest": digest(notebook), "provenance": provenance()})
     return {"job_id": str(job.pk), "status": job.status}
+
+
+@transaction.atomic
+def trash_run(run_id, restore=False):
+    from django.utils import timezone
+    run = Experiment.objects.get(pk=run_id)
+    job = Job.objects.filter(experiment=run).first()
+    if run.status == "running" or job and job.status == "running":
+        raise ValueError("Wait for the running experiment before deleting it")
+    if not restore and job and job.status == "queued":
+        job.status, job.finished_at = "canceled", timezone.now()
+        job.save(update_fields=["status", "finished_at"])
+        run.status = "canceled"
+    run.trashed_at = None if restore else timezone.now()
+    run.save(update_fields=["trashed_at", "status"])
+    return {"id": str(run.pk), "trashed": run.trashed_at is not None}

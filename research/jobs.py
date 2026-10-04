@@ -7,7 +7,16 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
-from research.models import Job, Dataset
+from research.models import Job, Dataset, ServiceHeartbeat
+
+
+def heartbeat(name, **details):
+    ServiceHeartbeat.objects.update_or_create(name=name, defaults={"updated_at": timezone.now(), "details": details})
+
+
+def health():
+    now = timezone.now()
+    return {item.name: {"available": (now - item.updated_at).total_seconds() < 90, "updated_at": item.updated_at.isoformat(), **item.details} for item in ServiceHeartbeat.objects.all()}
 from research.services import run_experiment, materialize
 
 
@@ -65,6 +74,7 @@ def work(once=False):
                 stale.experiment.status, stale.experiment.error = "failed", stale.error
                 stale.experiment.save()
         while True:
+            heartbeat("worker", status="ready")
             with transaction.atomic():
                 job = Job.objects.filter(status="queued").order_by("created_at").first()
                 if job:

@@ -3,7 +3,7 @@ import json
 import plotly.graph_objects as go
 from django.contrib import messages
 from django.contrib.auth.decorators import user_passes_test
-from django.http import HttpResponse
+from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 from portfolio.forms import ExperimentForm
@@ -25,7 +25,29 @@ def home(request):
             return redirect("run", key=queued["run_id"])
         except ValueError as exc:
             form.add_error(None, str(exc))
-    return render(request, "portfolio/home.html", {"form": form, "datasets": Dataset.objects.all(), "runs": Experiment.objects.all()[:20], "methods": catalog(), "jobs": Job.objects.order_by("-created_at")[:12]})
+    trash = request.GET.get("trash") == "1"
+    query = Experiment.objects.filter(trashed_at__isnull=not trash)
+    from research.jobs import health
+    return render(request, "portfolio/home.html", {"form": form, "datasets": Dataset.objects.all(), "runs": query[:100], "trash": trash, "health": health(), "methods": catalog(), "jobs": Job.objects.order_by("-created_at")[:12]})
+
+
+@operator
+@require_POST
+def run_action(request, key, action):
+    from research.services import trash_run
+    if action not in {"trash", "restore"}:
+        return HttpResponse(status=400)
+    try:
+        trash_run(key, restore=action == "restore")
+    except ValueError as exc:
+        messages.error(request, str(exc))
+    return redirect("home")
+
+
+@operator
+def job_status(request, key):
+    from research.jobs import public_job, health
+    return JsonResponse(dict(public_job(get_object_or_404(Job, pk=key)), health=health()))
 
 
 def charts(value):
@@ -77,7 +99,8 @@ def charts(value):
 def results(request, key=None):
     run = get_object_or_404(Experiment, pk=key) if key else Experiment.objects.first()
     plots = charts(run.results) if run and run.status == "succeeded" else []
-    return render(request, "portfolio/results.html", {"run": run, "plots": plots, "formula": METHODS[run.config["method"]][0] if run else "", "assumptions": METHODS[run.config["method"]][1] if run else "", "parameters": json.dumps(run.config, indent=2) if run else "", "report": safe_markdown(report(run)) if run else ""})
+    job = Job.objects.filter(experiment=run).first() if run else None
+    return render(request, "portfolio/results.html", {"run": run, "job": job, "plots": plots, "formula": METHODS.get(run.config.get("method"), ("", ""))[0] if run else "", "assumptions": METHODS.get(run.config.get("method"), ("", ""))[1] if run else "", "parameters": run.config if run else {}, "report": safe_markdown(report(run)) if run else ""})
 
 
 @operator
@@ -128,4 +151,5 @@ def compare(request):
         if run.status == "succeeded":
             figure.add_trace(go.Scatter(x=run.results["dates"], y=run.results["wealth"], name=f"{run.config['method']} · {str(run.pk)[:8]}"))
     figure.update_layout(template="plotly_white", title="Growth of $1")
-    return render(request, "portfolio/compare.html", {"runs": runs, "ids": ids, "plot": figure.to_json() if runs else None})
+    signatures = {(r.dataset_id, r.config.get("window"), r.config.get("seed"), r.config.get("parameters", {}).get("cost_bps", 10)) for r in runs}
+    return render(request, "portfolio/compare.html", {"runs": runs, "available": Experiment.objects.filter(trashed_at__isnull=True, status="succeeded")[:100], "mismatch": len(signatures) > 1, "ids": ids, "plot": figure.to_json() if runs else None})

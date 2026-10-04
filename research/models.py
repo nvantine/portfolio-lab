@@ -32,6 +32,7 @@ class Experiment(models.Model):
     results = models.JSONField(default=dict)
     status = models.CharField(max_length=16, default="queued")
     error = models.TextField(blank=True)
+    trashed_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ["-created_at"]
@@ -48,3 +49,9 @@ class Job(models.Model):
     payload = models.JSONField(default=dict)
     result = models.JSONField(default=dict)
     error = models.TextField(blank=True)
+
+
+class ServiceHeartbeat(models.Model):
+    name = models.CharField(max_length=32, primary_key=True)
+    updated_at = models.DateTimeField()
+    details = models.JSONField(default=dict)

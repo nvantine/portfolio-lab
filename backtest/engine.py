@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 
 from optimizer.risk import metrics, bootstrap_sharpe_interval
+from backtest.schedule import period
 
 
 def validate_weights(weights, tickers, cap=1.0):
@@ -33,8 +34,8 @@ def evaluate(prices, strategy, parameters, start, end, seed=42):
         raise ValueError("Trading costs must be between 0 and 1000 bps")
     cap = float(parameters.get("cap", .2))
     rebalance = parameters.get("rebalance", "monthly")
-    if rebalance not in ("daily", "monthly"):
-        raise ValueError("Rebalance must be daily or monthly")
+    if rebalance not in ("daily", "weekly", "monthly"):
+        raise ValueError("Rebalance must be daily, weekly, or monthly")
     weights = pd.Series(0.0, index=prices.columns)
     pending = None
     previous_month = None
@@ -62,7 +63,7 @@ def evaluate(prices, strategy, parameters, start, end, seed=42):
         dates.append(str(day.date()))
         turnover.append(traded)
         allocations.append(weights.to_dict())
-        month = (day.year, day.month)
+        month = period(day, rebalance)
         if rebalance == "daily" or month != previous_month:
             pending = validate_weights(strategy(prices.iloc[:i + 1].copy(), weights.to_dict(), parameters), prices.columns, cap)
         previous_month = month
