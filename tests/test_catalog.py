@@ -16,6 +16,9 @@ def history():
 @pytest.mark.parametrize("method", list(METHODS))
 def test_all_registered_methods(history, method):
     params = {"method": method, "cap": .25, "lookback": 100, "views": {"SPY": .001}}
+    if method == "tracking_error": params["benchmark_weights"] = dict.fromkeys(history.columns, 1/6)
+    if method == "fixed_weights": params["fixed_weights"] = dict.fromkeys(history.columns, 1/6)
+    if method == "recipe": params["recipe"] = {"signal": "none", "allocator": "min_variance"}
     weights = target_weights(history, dict.fromkeys(history.columns, 1/6), params)
     assert validate_weights(weights, history.columns, .25).sum() <= 1 + 1e-7
 

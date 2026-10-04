@@ -10,10 +10,14 @@ from optimizer.risk import metrics, bootstrap_sharpe_interval
 from backtest.schedule import period
 
 
-def validate_weights(weights, tickers, cap=1.0):
+def validate_weights(weights, tickers, cap=1.0, *, allow_short=False, net_exposure=1, gross_limit=1.5, short_cap=.2):
     if not isinstance(weights, dict) or set(weights) - set(tickers):
         raise ValueError("Strategy returned unknown assets or invalid weights")
     values = pd.Series(weights, dtype=float).reindex(tickers, fill_value=0.0)
+    if allow_short:
+        if not np.isfinite(values).all() or (values < -short_cap-1e-7).any() or (values > cap+1e-7).any() or abs(values.sum()-net_exposure) > 1e-6 or values.abs().sum() > gross_limit+1e-7:
+            raise ValueError("Signed weights violate net/gross exposure or position limits")
+        return values
     if not np.isfinite(values).all() or (values < -1e-8).any():
         raise ValueError("Weights must be finite and nonnegative")
     if values.sum() > 1 + 1e-7 or (values > cap + 1e-7).any():
@@ -33,6 +37,9 @@ def evaluate(prices, strategy, parameters, start, end, seed=42):
     if not 0 <= costs <= .1:
         raise ValueError("Trading costs must be between 0 and 1000 bps")
     cap = float(parameters.get("cap", .2))
+    signed = parameters.get("allow_short", False)
+    def checked(value):
+        return validate_weights(value, prices.columns, cap, allow_short=signed, net_exposure=parameters.get("net_exposure", 1), gross_limit=parameters.get("gross_limit", 1.5), short_cap=parameters.get("short_cap", .2))
     rebalance = parameters.get("rebalance", "monthly")
     if rebalance not in ("daily", "weekly", "monthly"):
         raise ValueError("Rebalance must be daily, weekly, or monthly")
@@ -41,10 +48,16 @@ def evaluate(prices, strategy, parameters, start, end, seed=42):
     previous_month = None
     daily, dates, turnover, allocations = [], [], [], []
     # Start with cash. An initial signal is formed before the evaluation window.
-    pending = validate_weights(strategy(prices.iloc[:start].copy(), weights.to_dict(), parameters), prices.columns, cap)
+    pending = checked(strategy(prices.iloc[:start].copy(), weights.to_dict(), parameters))
     for i in range(start, end):
         asset_return = prices.iloc[i] / prices.iloc[i - 1] - 1
-        gross = float(weights @ asset_return)
+        elapsed = (prices.index[i] - prices.index[i-1]).days
+        cash = 1 - float(weights.sum())
+        carry = min(cash, 0) * parameters.get("financing_rate", 0) * elapsed / 365
+        carry -= float((-weights.clip(upper=0)).sum()) * parameters.get("borrow_rate", .03) * elapsed / 360 if signed else 0
+        gross = float(weights @ asset_return) + carry
+        if not np.isfinite(gross) or gross <= -1:
+            raise ValueError("Portfolio equity became nonpositive")
         weights = weights * (1 + asset_return) / (1 + gross)
         traded = 0.0
         if pending is not None:
@@ -54,6 +67,7 @@ def evaluate(prices, strategy, parameters, start, end, seed=42):
             # At daily ETF costs this fixed-point converges rapidly.
             for _ in range(20):
                 fee = float(((1 - fee) * pending - weights).abs().sum()) * costs
+            if fee >= 1 or not np.isfinite(fee): raise ValueError("Trading costs exhausted portfolio equity")
             traded = float(((1 - fee) * pending - weights).abs().sum())
             gross = (1 + gross) * (1 - fee) - 1
             weights = pending.copy()
@@ -65,7 +79,7 @@ def evaluate(prices, strategy, parameters, start, end, seed=42):
         allocations.append(weights.to_dict())
         month = period(day, rebalance)
         if rebalance == "daily" or month != previous_month:
-            pending = validate_weights(strategy(prices.iloc[:i + 1].copy(), weights.to_dict(), parameters), prices.columns, cap)
+            pending = checked(strategy(prices.iloc[:i + 1].copy(), weights.to_dict(), parameters))
         previous_month = month
     returns = np.asarray(daily)
     wealth = np.concatenate(([1.0], np.cumprod(1 + returns)))

@@ -25,7 +25,7 @@ def get_client() -> StockHistoricalDataClient:
 
 
 def fetch_daily_bars(
-    client: StockHistoricalDataClient, ticker: str, start: date, end: date, *, adjustment=Adjustment.ALL
+    client: StockHistoricalDataClient, ticker: str, start: date, end: date, *, adjustment=Adjustment.ALL, feed=DataFeed.IEX
 ) -> list:
     """Return split/dividend-adjusted IEX daily bars for an inclusive date range."""
     request = StockBarsRequest(
@@ -34,7 +34,7 @@ def fetch_daily_bars(
         start=datetime.combine(start, datetime.min.time(), tzinfo=timezone.utc),
         end=datetime.combine(end + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc),
         adjustment=adjustment,
-        feed=DataFeed.IEX,
+        feed=feed,
     )
     return client.get_stock_bars(request).data.get(ticker, [])
 

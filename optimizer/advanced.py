@@ -8,10 +8,12 @@ from optimizer.objectives import _validate_covariance
 
 def allocation(covariance, means=None, *, method="min_variance", cap=1.0, risk_aversion=10.0,
                current=None, turnover_limit=None, cost_bps=0.0, robust_radius=0.0,
-               scenarios=None, confidence=.95, target_return=None):
+               scenarios=None, confidence=.95, target_return=None, allow_short=False,
+               net_exposure=1.0, gross_limit=1.5, short_cap=.2, benchmark_weights=None):
     tickers, sigma = _validate_covariance(covariance)
     n = len(tickers)
-    if not np.isfinite(cap) or cap <= 0 or cap > 1 or n*cap < 1-1e-9:
+    budget = net_exposure if allow_short else 1
+    if not np.isfinite(cap) or cap <= 0 or cap > 1 or n*cap < budget-1e-9:
         raise ValueError("Position cap is infeasible for this universe")
     for value in (risk_aversion, cost_bps, robust_radius):
         if not np.isfinite(value) or value < 0:
@@ -20,7 +22,11 @@ def allocation(covariance, means=None, *, method="min_variance", cap=1.0, risk_a
     if not np.isfinite(mu).all():
         raise ValueError("Expected returns must match covariance ticker labels")
     w = cp.Variable(n)
-    constraints = {"budget": cp.sum(w) == 1, "long_only": w >= 0, "position_cap": w <= cap}
+    constraints = {"budget": cp.sum(w) == budget, "short_bound" if allow_short else "long_only": w >= -short_cap if allow_short else w >= 0, "position_cap": w <= cap}
+    if allow_short:
+        if not all(np.isfinite(v) for v in (net_exposure, gross_limit, short_cap)) or gross_limit < abs(net_exposure) or not 0 <= short_cap <= 1:
+            raise ValueError("Invalid signed exposure constraints")
+        constraints["gross_exposure"] = cp.norm1(w) <= gross_limit
     variance = cp.quad_form(w, cp.psd_wrap(sigma))
     if method == "min_variance":
         loss = variance
@@ -34,7 +40,13 @@ def allocation(covariance, means=None, *, method="min_variance", cap=1.0, risk_a
             raise ValueError("Invalid CVaR scenarios")
         threshold = cp.Variable()
         loss = threshold + cp.sum(cp.pos(-values@w-threshold))/((1-confidence)*len(values))
-    elif method == "max_sharpe":
+    elif method == "tracking_error":
+        if not benchmark_weights or set(benchmark_weights) - set(tickers): raise ValueError("Supply benchmark weights within the universe")
+        reference = np.array([benchmark_weights.get(t, 0) for t in tickers])
+        loss = cp.quad_form(w-reference, cp.psd_wrap(sigma))
+    elif method in ("max_sharpe", "max_diversification"):
+        if allow_short: raise ValueError("Transformed ratio allocator supports long-only research")
+        if method == "max_diversification": mu = np.sqrt(np.diag(sigma))
         if mu.max() <= 0 or current is not None or turnover_limit is not None:
             raise ValueError("Maximum Sharpe requires positive excess returns and no turnover penalty")
         y, scale = cp.Variable(n), cp.Variable(nonneg=True)
@@ -61,9 +73,10 @@ def allocation(covariance, means=None, *, method="min_variance", cap=1.0, risk_a
     if problem.status != cp.OPTIMAL or w.value is None:
         raise ValueError(f"Allocation infeasible or solver failed: {problem.status}")
     values = np.asarray(w.value)
-    if values.min() < -1e-6 or values.max() > cap+1e-6 or abs(values.sum()-1) > 1e-6:
+    if values.min() < (-short_cap if allow_short else 0)-1e-6 or values.max() > cap+1e-6 or abs(values.sum()-budget) > 1e-6 or allow_short and np.abs(values).sum() > gross_limit+1e-6:
         raise ValueError("Solver constraint violation")
-    values = np.maximum(values, 0); values /= values.sum()
+    if not allow_short:
+        values = np.maximum(values, 0); values /= values.sum()
     return {"weights": dict(zip(tickers, values.tolist())),
             "duals": {name: np.asarray(c.dual_value).tolist() for name,c in constraints.items()},
             "status": problem.status}

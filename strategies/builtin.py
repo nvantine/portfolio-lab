@@ -13,12 +13,13 @@ from optimizer.advanced import allocation, black_litterman
 from strategies.catalog import METHODS
 
 
-def covariance(returns, name="ledoit_wolf"):
+def covariance(returns, name="ledoit_wolf", ewma_decay=.94):
     if name == "sample": return sample_covariance(returns)
     if name == "ledoit_wolf": return ledoit_wolf_covariance(returns)
     x = returns.to_numpy(dtype=float)
     if name == "ewma":
-        weights = .94**np.arange(len(x)-1, -1, -1)
+        if not 0 < ewma_decay < 1: raise ValueError("EWMA decay must be in (0, 1)")
+        weights = ewma_decay**np.arange(len(x)-1, -1, -1)
         matrix = np.cov(x, rowvar=False, aweights=weights, ddof=0)
     elif name == "pca":
         model = PCA(n_components=min(3, len(returns.columns), len(returns)-1)).fit(x)
@@ -71,25 +72,35 @@ def hierarchical_weights(sigma, returns):
 
 
 def target_weights(history, current_weights, parameters):
+    if parameters.get("recipe"):
+        from strategies.recipes import target_weights as recipe_weights
+        return recipe_weights(history, current_weights, parameters)
     method = parameters.get("method", "min_variance")
+    if method == "recipe": raise ValueError("Select a saved recipe or supply recipe components")
     if method not in METHODS: raise ValueError("Unknown strategy method")
     cap = parameters.get("cap", .2)
     prices = history.tail(parameters.get("lookback", 126)+1)
     returns = prices.pct_change(fill_method=None).dropna()
     if len(returns) < 10: raise ValueError("Strategy needs at least ten historical returns")
-    cov = covariance(returns, parameters.get("covariance", "ledoit_wolf"))
+    cov = covariance(returns, parameters.get("covariance", "ledoit_wolf"), parameters.get("ewma_decay", .94))
     n = len(prices.columns)
     means = returns.mean()
+    if parameters.get("allow_short") and method not in {"min_variance", "mean_variance", "robust", "cvar", "tracking_error", "fixed_weights"}:
+        raise ValueError("Use a signed-compatible allocator or custom Python strategy")
+    if method == "fixed_weights":
+        if not parameters.get("fixed_weights"): raise ValueError("Supply explicit fixed weights")
+        return parameters["fixed_weights"]
     if method == "black_litterman":
         means = black_litterman(cov, dict.fromkeys(prices.columns, 1/n), parameters.get("views", {}), parameters.get("view_uncertainty", .0001), tau=parameters.get("tau", .05))
-    if method in ("min_variance", "mean_variance", "max_sharpe", "cvar", "robust", "black_litterman"):
+    if method in ("min_variance", "mean_variance", "max_sharpe", "cvar", "robust", "black_litterman", "tracking_error", "max_diversification"):
         rf = (1+parameters.get("annual_risk_free_rate", 0))**(1/252)-1
         return allocation(cov, means-rf if method == "max_sharpe" else means, method=method, cap=cap,
                           risk_aversion=parameters.get("risk_aversion", 10),
                           robust_radius=parameters.get("robust_radius", .001) if method == "robust" else 0,
-                          current=current_weights if method != "max_sharpe" else None,
+                          current=current_weights if method not in {"max_sharpe", "max_diversification"} else None,
                           turnover_limit=parameters.get("turnover_limit"), cost_bps=parameters.get("cost_bps", 0),
-                          scenarios=returns, confidence=parameters.get("confidence", .95))["weights"]
+                          scenarios=returns, confidence=parameters.get("confidence", .95),
+                          allow_short=parameters.get("allow_short", False), net_exposure=parameters.get("net_exposure", 1), gross_limit=parameters.get("gross_limit", 1.5), short_cap=parameters.get("short_cap", .2), benchmark_weights=parameters.get("benchmark_weights"))["weights"]
     if method in ("momentum", "mean_reversion", "ridge"):
         if method == "momentum": scores = prices.iloc[-1]/prices.iloc[0]-1
         elif method == "mean_reversion": scores = -(prices.iloc[-1]-prices.mean())/prices.std().replace(0, np.nan)

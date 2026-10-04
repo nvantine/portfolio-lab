@@ -19,6 +19,8 @@ class StrategyVersion(models.Model):
     name = models.CharField(max_length=120)
     digest = models.CharField(max_length=64, unique=True)
     source = models.TextField()
+    kind = models.CharField(max_length=12, default="python")
+    recipe = models.JSONField(default=dict)
 
 
 class Experiment(models.Model):

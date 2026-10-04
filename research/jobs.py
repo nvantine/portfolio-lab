@@ -36,6 +36,9 @@ def perform(job):
             run.status = "succeeded"
             run.save(update_fields=["results", "status"])
             job.result = {"run_id": str(run.pk)}
+        elif job.kind == "dataset":
+            from research.datasets import fetch_preview
+            job.result = fetch_preview(job.payload)
         elif job.kind == "notebook":
             from workers.isolation import StrategyProcess
             dataset = Dataset.objects.get(pk=job.payload["dataset"])

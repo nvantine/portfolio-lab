@@ -21,7 +21,7 @@ def digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
 
 
-def freeze_frame(frame, name="ETF snapshot", source="Alpaca IEX, adjustment=all"):
+def freeze_frame(frame, name="ETF snapshot", source="Alpaca IEX, adjustment=all", extra_manifest=None):
     frame = frame.sort_index().sort_index(axis=1)
     if frame.index.has_duplicates or frame.columns.has_duplicates:
         raise ValueError("Duplicate dates or symbols")
@@ -33,6 +33,7 @@ def freeze_frame(frame, name="ETF snapshot", source="Alpaca IEX, adjustment=all"
     manifest = {"source": source, "aligned_rows": len(frame), "dropped_rows": before - len(frame),
                 "train_end": int(len(frame) * .6), "validation_end": int(len(frame) * .8),
                 "alignment": "Common observed dates; no forward fill", "schema": 1}
+    manifest.update(extra_manifest or {})
     dataset, _ = Dataset.objects.get_or_create(digest=digest({"snapshot": snapshot, "manifest": manifest}), defaults={"name": name, "snapshot": snapshot, "manifest": manifest})
     return dataset
 
@@ -68,6 +69,15 @@ def register_strategy(name, source):
     return value
 
 
+def register_recipe(name, recipe):
+    from strategies.recipes import validate_recipe
+    validate_recipe(recipe)
+    if not name or len(name) > 120:
+        raise ValueError("Supply a short strategy name")
+    value, _ = StrategyVersion.objects.get_or_create(digest=digest({"recipe": recipe}), defaults={"name": name, "source": "", "kind": "recipe", "recipe": recipe})
+    return value
+
+
 def provenance():
     import importlib.metadata
     import platform
@@ -99,11 +109,11 @@ def validate_config(config, agent=False):
     if not isinstance(config.get("hypothesis", ""), str) or len(config.get("hypothesis", "")) > 4000:
         raise ValueError("Hypothesis must be text under 4000 characters")
     parameters = dict(config.get("parameters", {}))
-    allowed = {"cap", "lookback", "covariance", "risk_aversion", "turnover_limit", "cost_bps", "robust_radius", "confidence", "views", "view_uncertainty", "tau", "ridge_alpha", "target_volatility", "rebalance"}
+    allowed = {"cap", "lookback", "covariance", "risk_aversion", "turnover_limit", "cost_bps", "robust_radius", "confidence", "views", "view_uncertainty", "tau", "ridge_alpha", "target_volatility", "rebalance", "recipe", "fixed_weights", "benchmark_weights", "allow_short", "net_exposure", "gross_limit", "short_cap", "borrow_rate", "financing_rate", "ewma_decay", "turnover_penalty_bps"}
     if set(parameters) - allowed:
         raise ValueError("Unknown strategy parameters")
     for key, value in parameters.items():
-        if key in {"covariance", "views", "rebalance"} or key == "turnover_limit" and value is None:
+        if key in {"covariance", "views", "rebalance", "recipe", "fixed_weights", "benchmark_weights", "allow_short"} or key == "turnover_limit" and value is None:
             continue
         if not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(value):
             raise ValueError(f"{key} must be a finite number")
@@ -120,6 +130,17 @@ def validate_config(config, agent=False):
         raise ValueError("Views must map ticker names to finite daily return estimates")
     if parameters.get("covariance", "ledoit_wolf") not in COVARIANCES:
         raise ValueError("Unknown covariance estimator")
+    if not isinstance(parameters.get("allow_short", False), bool): raise ValueError("allow_short must be boolean")
+    if parameters.get("gross_limit", 1.5) < abs(parameters.get("net_exposure", 1)) or not 0 <= parameters.get("short_cap", .2) <= 1:
+        raise ValueError("Invalid signed exposure limits")
+    if not 0 < parameters.get("ewma_decay", .94) < 1: raise ValueError("EWMA decay must be in (0, 1)")
+    for key in ("fixed_weights", "benchmark_weights"):
+        value = parameters.get(key, {})
+        if not isinstance(value, dict) or any(not isinstance(t, str) or not isinstance(w, (int, float)) or isinstance(w, bool) or not math.isfinite(w) for t, w in value.items()):
+            raise ValueError(f"{key} must map symbols to finite weights")
+    if parameters.get("recipe"):
+        from strategies.recipes import validate_recipe
+        validate_recipe(dict(parameters["recipe"], parameters=parameters))
     if not 0 < float(parameters.get("cap", .2)) <= 1:
         raise ValueError("Position cap must be in (0, 1]")
     if not 10 <= int(parameters.get("lookback", 126)) <= 2520:
@@ -140,13 +161,17 @@ def queue_experiment(config, agent=False):
 
 
 def run_experiment(run):
-    prices = materialize(run.dataset)
+    all_prices = materialize(run.dataset)
+    prices = all_prices.loc[:, run.dataset.manifest.get("assets", list(all_prices))]
     config = validate_config(run.config)
     parameters = dict(config["parameters"], method=config["method"])
+    if run.strategy and run.strategy.kind == "recipe":
+        parameters = dict(run.strategy.recipe.get("parameters", {}), **config["parameters"], recipe=run.strategy.recipe, method="recipe")
+        parameters = validate_config(dict(config, parameters=parameters))["parameters"] | {"method": "recipe"}
     start = run.dataset.manifest["train_end"] if config["window"] == "validation" else run.dataset.manifest["validation_end"]
     end = run.dataset.manifest["validation_end"] if config["window"] == "validation" else len(prices)
     parameters.setdefault("cap", .2)
-    if run.strategy:
+    if run.strategy and run.strategy.kind == "python":
         from workers.isolation import StrategyProcess
         if hashlib.sha256(run.strategy.source.encode()).hexdigest() != run.strategy.digest:
             raise ValueError("Strategy integrity check failed")
@@ -156,20 +181,23 @@ def run_experiment(run):
             result = evaluate(prices, isolated.weights, parameters, start, end, config["seed"])
     else:
         result = evaluate(prices, target_weights, parameters, start, end, config["seed"])
-    equal = evaluate(prices, target_weights, dict(parameters, method="equal_weight", cap=1, turnover_limit=None), start, end, config["seed"])
+    baseline = {key: value for key, value in parameters.items() if key not in {"recipe", "allow_short", "fixed_weights", "net_exposure"}}
+    equal = evaluate(prices, target_weights, dict(baseline, method="equal_weight", cap=1, turnover_limit=None), start, end, config["seed"])
     result["benchmarks"] = {"equal_weight": equal}
-    if "SPY" in prices:
-        result["benchmarks"]["SPY"] = evaluate(prices[["SPY"]], lambda history, current, params: {"SPY": 1.0}, dict(parameters, cap=1), start, end, config["seed"])
+    benchmark = run.dataset.manifest.get("benchmark", "SPY")
+    if benchmark in all_prices:
+        result["benchmarks"][benchmark] = evaluate(all_prices[[benchmark]], lambda history, current, params: {benchmark: 1.0}, dict(baseline, cap=1), start, end, config["seed"])
     from optimizer.risk import metrics
     result["metrics"].update(metrics(result["returns"], benchmark=equal["returns"]))
     result["trial_count"] = Experiment.objects.filter(dataset=run.dataset).count()
     result["warning"] = "Repeated validation trials are selection, not independent evidence. Holdout must stay untouched until method selection is final."
     recent = prices.iloc[:end].tail(int(parameters.get("lookback", 126)) + 1).pct_change(fill_method=None).dropna()
-    sigma = covariance(recent, parameters.get("covariance", "ledoit_wolf"))
+    sigma = covariance(recent, parameters.get("covariance", "ledoit_wolf"), parameters.get("ewma_decay", .94))
     result["covariance"] = {"tickers": list(sigma.columns), "values": sigma.to_numpy().tolist()}
     from optimizer.advanced import efficient_frontier
-    result["frontier"] = efficient_frontier(sigma, recent.mean(), cap=parameters["cap"])
-    if config["method"] in ("min_variance", "mean_variance", "cvar", "robust") and not run.strategy:
+    result["frontier"] = efficient_frontier(sigma, recent.mean(), cap=parameters["cap"]) if not parameters.get("allow_short") and len(prices.columns)*parameters["cap"] >= 1 else []
+    result["diagnostics"] = {"note": "Frontier omitted for signed research or an infeasible fully-invested long-only cap."} if not result["frontier"] else {}
+    if config["method"] in ("min_variance", "mean_variance", "cvar", "robust") and not run.strategy and not parameters.get("allow_short"):
         from optimizer.advanced import allocation
         fitted = allocation(sigma, recent.mean(), method=config["method"], cap=parameters["cap"], risk_aversion=parameters.get("risk_aversion", 10), scenarios=recent, robust_radius=parameters.get("robust_radius", .001) if config["method"] == "robust" else 0)
         result["diagnostics"] = {"duals": fitted["duals"], "note": "At evaluation end; objective-unit sensitivities, not return forecasts. No trade-cost penalty in this diagnostic fit."}
