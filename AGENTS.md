@@ -14,6 +14,7 @@ Inspect `git status --short` before editing; preserve unrelated changes. Use `rg
 - [Architecture](docs/architecture.md): code walkthrough.
 - [Methodology](docs/methodology.md): mathematics, timing, costs, limitations.
 - [CLI](docs/cli.md): shared capabilities and examples.
+- [Datasets](docs/datasets.md): fetch/preview/save workflow and automatic page updates.
 - [Server](docs/server.md): supervised services and SSH access.
 - [Account execution](docs/paper.md): credentials, sleeves, reconciliation, controls.
 

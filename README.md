@@ -18,7 +18,7 @@ The usual Django `runserver` starts only the website; automatic processing needs
 ## Workspaces
 
 - **Research:** configure a method or saved strategy, daily/weekly/monthly rebalancing, risk/cost assumptions, validation or holdout, and a hypothesis. Experiments process asynchronously. Delete moves a run to trash; restore keeps its history.
-- **Datasets:** choose stock/ETF symbols, dates, explicit IEX/SIP feed, and an independent benchmark. Review coverage, missing symbols, and lost dates before accepting a frozen snapshot. Refresh creates a new version. An ETF preset and synthetic demonstration are available.
+- **Datasets:** choose actual stock/ETF symbols, dates (including today), explicit IEX/SIP feed, and an independent benchmark. Fetch progress and previews update automatically. Review coverage, missing symbols, and lost dates, then save the snapshot to use it in Research. Refresh creates a new version. See the [dataset workflow](docs/datasets.md).
 - **Strategies:** save compatible recipes or upload Python implementing `target_weights(history, current_weights, parameters)`. Review source/versions and submit training-data notebooks.
 - **Results:** metrics, allocations, wealth, drawdowns, turnover, covariance, frontier, risk contributions, shadow prices, descriptive simulation, and provenance. Charts expand to full width or an overlay. Download JSON or Markdown reports.
 - **Compare:** select experiments, sort metric columns, and zoom synchronized charts. Differences in dataset/window/cost/seed are flagged.
@@ -88,6 +88,7 @@ uv export --no-emit-project --no-hashes --format requirements-txt --output-file 
 - [Architecture and code walkthrough](docs/architecture.md)
 - [Mathematics and limitations](docs/methodology.md)
 - [Dashboard/CLI workflows](docs/cli.md)
+- [Dataset fetching, previews, and automatic updates](docs/datasets.md)
 - [Server installation](docs/server.md)
 - [Active strategies and credentials](docs/paper.md)
 - [Coding-agent instructions](AGENTS.md)
