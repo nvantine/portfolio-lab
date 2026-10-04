@@ -1,0 +1,13 @@
+[Unit]
+Description=Portfolio Lab automatic experiment worker
+PartOf=portfolio-lab.target
+
+[Service]
+WorkingDirectory=%h/Projects/portfolio-lab
+ExecStart=%h/.local/bin/uv run --locked portfolio-lab jobs work
+Restart=on-failure
+RestartSec=5
+Environment=LAB_SOCKET=
+
+[Install]
+WantedBy=portfolio-lab.target

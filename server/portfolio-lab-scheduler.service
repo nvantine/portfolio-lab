@@ -1,0 +1,13 @@
+[Unit]
+Description=Portfolio Lab scheduled strategy cycles
+PartOf=portfolio-lab.target
+
+[Service]
+WorkingDirectory=%h/Projects/portfolio-lab
+ExecStart=%h/.local/bin/uv run --locked portfolio-lab scheduler work
+Restart=on-failure
+RestartSec=5
+Environment=LAB_SOCKET=
+
+[Install]
+WantedBy=portfolio-lab.target

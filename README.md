@@ -1,114 +1,81 @@
 # Portfolio Lab
 
-A single-user Django laboratory for daily ETF allocation, reproducible quant experiments, mathematical explanations, isolated agent research and human-approved **Alpaca paper** execution.
+A single-owner Django workspace for stock/ETF portfolio research, reproducible experiments, mathematical explanations, and multiple strategies on an Alpaca paper account. The dashboard and CLI share the same capabilities; any authorized agent can use the CLI.
 
-## Start
-
-Requires uv and Python 3.13. All Python environment and execution commands use uv.
+## Start locally
 
 ```bash
 uv sync --locked
 uv run python manage.py migrate
 uv run python manage.py createsuperuser
-uv run python manage.py runserver 127.0.0.1:8000
+uv run portfolio-lab app run --port 8010
 ```
 
-Log in at http://127.0.0.1:8000/. Use an SSH tunnel for remote access; keep the development server on loopback. Set a private random `DJANGO_SECRET_KEY` in `.env`; never use the example placeholder. No operator password is pre-created.
+Before starting, create `.env` from `.env.example` in your editor and set a private `DJANGO_SECRET_KEY`. Historical Alpaca keys are optional for synthetic demonstrations; account execution uses separate `.env.paper` credentials. Never paste keys into chat. The foreground command starts the dashboard, queue worker, scheduler, and owner-only socket together. Open http://127.0.0.1:8010. Use Ctrl+C to stop the stack. For supervised server operation and SSH access, follow [server setup](docs/server.md).
 
-In a second terminal, process the durable job queue:
+The usual Django `runserver` starts only the website; automatic processing needs the worker service. No account execution is enabled until you explicitly activate a strategy.
 
-```bash
-uv run portfolio-lab jobs work
-```
+## Workspaces
 
-## First experiment without API keys
+- **Research:** configure a method or saved strategy, daily/weekly/monthly rebalancing, risk/cost assumptions, validation or holdout, and a hypothesis. Experiments process asynchronously. Delete moves a run to trash; restore keeps its history.
+- **Datasets:** choose stock/ETF symbols, dates, explicit IEX/SIP feed, and an independent benchmark. Review coverage, missing symbols, and lost dates before accepting a frozen snapshot. Refresh creates a new version. An ETF preset and synthetic demonstration are available.
+- **Strategies:** save compatible recipes or upload Python implementing `target_weights(history, current_weights, parameters)`. Review source/versions and submit training-data notebooks.
+- **Results:** metrics, allocations, wealth, drawdowns, turnover, covariance, frontier, risk contributions, shadow prices, descriptive simulation, and provenance. Charts expand to full width or an overlay. Download JSON or Markdown reports.
+- **Compare:** select experiments, sort metric columns, and zoom synchronized charts. Differences in dataset/window/cost/seed are flagged.
+- **Active Strategies:** activate exact reviewed versions, allocate budgets, inspect attributed holdings/performance and net account orders, pause/resume, or close-and-stop. The connected account remains paper; no live mode exists.
 
-```bash
-uv run portfolio-lab datasets demo
-# Set examples/min-variance.json dataset to the returned ID if it is not 1.
-uv run portfolio-lab experiments run examples/min-variance.json
-uv run portfolio-lab jobs work --once
-uv run portfolio-lab runs list
-```
+## Strategy choices
 
-The synthetic dataset is labeled and cannot be approved for paper execution. The dashboard queues the same jobs as the CLI. Review allocations, cash, drift, growth/drawdown, equal-weight/SPY comparisons, rolling volatility, covariance, frontier, duals, metrics, bootstrap intervals and physical simulations. Formula cards render using local KaTeX; Plotly also loads locally.
+Existing methods include equal weight, inverse volatility, minimum variance, mean variance, maximum Sharpe, CVaR, robust allocation, risk parity, HRP, Black–Litterman, momentum, mean reversion, ridge, and volatility targeting. Added choices include fixed user weights, tracking-error minimization, maximum diversification, and recipe/custom strategies.
 
-## Historical Alpaca data
+Recipes combine a return signal, covariance estimator, allocator, optional volatility overlay, and compatible constraints. Risk models include sample, Ledoit–Wolf, configurable EWMA, and PCA approximation. Minimum variance does not consume a forecast; the builder rejects incompatible components instead of ignoring them. See [CLI examples](docs/cli.md) and [methodology](docs/methodology.md).
 
-1. Copy `.env.example` to `.env` only if `.env` does not already exist; keep existing credentials.
-2. Edit locally and set `ALPACA_API_KEY` and `ALPACA_SECRET_KEY`. Never paste keys in chat or commit `.env`.
-3. Set `DJANGO_SECRET_KEY` to a locally generated random secret and run `chmod 600 .env`.
-4. Check loading without printing values:
-
-   ```bash
-   uv run python manage.py shell -c 'from django.conf import settings; print("Key loaded:", bool(settings.ALPACA_API_KEY), "Secret loaded:", bool(settings.ALPACA_SECRET_KEY))'
-   ```
-
-5. Verify historical bars:
-
-   ```bash
-   uv run python manage.py refresh_prices --check-connection
-   ```
-
-6. Refresh and freeze:
-
-   ```bash
-   uv run portfolio-lab data refresh
-   uv run portfolio-lab datasets freeze SPY QQQ IWM EFA EEM AGG TLT LQD HYG GLD VNQ XLE XLK XLV XLF DBC
-   ```
-
-The editable universe is in `marketdata/universe.py`. Daily bars explicitly use IEX and adjustment ALL (splits/dividends); only common observed dates enter a snapshot, with no forward fill. IEX venue coverage differs from SIP. Paper sizing separately requests RAW historical bars, never uses adjusted prices for order limits.
+Signed research supports net/gross exposure constraints, short bounds, borrow costs, financing assumptions, and an equity-exhaustion failure condition. It is **backtest-only** in this release. Options and ETF constituent importing are not included.
 
 ## CLI
 
 ```bash
 uv run portfolio-lab methods list
-uv run portfolio-lab experiments sweep examples/sweep.json
-uv run portfolio-lab jobs status JOB_ID
-uv run portfolio-lab runs show RUN_ID
-uv run portfolio-lab runs compare RUN_ID OTHER_RUN_ID
-uv run portfolio-lab reports export RUN_ID --output report.md
-uv run portfolio-lab strategies register examples/strategy.py --name equal-weight-example
-uv run portfolio-lab notebooks run examples/covariance.ipynb --dataset DATASET_ID
-uv run portfolio-lab paper status
+uv run portfolio-lab datasets list
+uv run portfolio-lab experiments run examples/min-variance.json --wait
+uv run portfolio-lab runs list
+uv run portfolio-lab jobs health
 ```
 
-Experiment configs are JSON with schema, dataset ID, method, optional strategy hash, seed, hypothesis, window and parameters. `window` defaults to validation; only an operator may request final holdout. A registered strategy defines `target_weights(history, current_weights, parameters)` and executes only in the isolated worker. All trials—including failures—remain in SQLite.
+Use returned dataset/run/job identifiers rather than assuming the examples match your database. Queue commands return IDs immediately unless `--wait` is selected. JSON results go to stdout; JSON diagnostics go to stderr. Full dashboard/CLI parity includes dataset creation, strategy registration, trash/restore, notebooks, reports, activation, and account controls. There are no agent-specific quotas or holdout exclusions.
 
-## Isolated generated code
+For socket operation on the server, set `LAB_SOCKET` to the owner-only service socket described in [server setup](docs/server.md). Direct local commands remain available. Process-management commands start locally rather than through the request socket.
 
-Install rootless Docker using its official documented setup. Require rootless mode, systemd/cgroup v2 and actual CPU/memory/swap/PID limits. There is no rootful fallback.
+## Submitted code
+
+Built-in recipes use pure Python numerical packages. Uploaded Python and notebooks execute only in a rootless container with no network, credentials, or host mounts; bounded CPU/memory/PIDs/time/output; and a read-only filesystem. Registration only parses source. Build the worker after changing numerical source or dependencies:
 
 ```bash
-docker info --format '{{.SecurityOptions}} {{.CgroupVersion}} {{.CgroupDriver}}'
-docker build -f workers/Dockerfile -t portfolio-lab-worker:0.2 .
+uv run python -m workers.build_image --cached
 ```
 
-If registry/package downloads are slow and `uv sync --locked` has already populated the local cache, use `uv run python -m workers.build_image --cached`. It creates a fresh dependency-only build context using `uv pip sync --offline` and the same Docker recipe. Runtime restrictions are identical; the resulting image ID is recorded per job.
+The cached builder needs uv's populated dependency cache and a functioning rootless Docker installation with cgroup v2/systemd resource enforcement. The normal builder without `--cached` downloads dependencies. Rich notebook output is discarded; reviewed source/output is escaped. Container isolation is independent of whether the caller is human or an agent.
 
-Build context explicitly excludes `.env`, database and books. Runtime containers have no network, credentials or host mounts. They run as an unprivileged user with a read-only filesystem, resource/time bounds and training/prefix data via stdin. Notebooks are executed then reviewed as escaped plain text; they are not interactive notebooks. See [Hermes setup and prompt](docs/hermes.md). Configure separate OS users on the server before scheduling an autonomous agent; no Hermes cron task is enabled here.
+## Execution
 
-## Paper operator approval
+Multiple sleeves track their own cash and whole shares. Desired holdings are netted at account level; internal transfers use recorded raw reference prices, and external fills are attributed proportionally with deterministic whole-share rounding. Unmanaged holdings are displayed and retained unless explicitly adopted. Pausing retains holdings. Closing requests unwinding; the sleeve stops after fills.
 
-See [paper credential and approval steps](docs/paper.md). Separate `.env.paper` credentials, authenticated review, immutable approval fingerprint, allowlist, no leverage, $10,000 maximum budget and 20% position cap are required. Open/partial orders and uncertain submissions block new work. Pause/revoke requests cancellation and retains positions. The endpoint is permanently paper; no live mode exists. No execution approval or trading credentials are created automatically.
+Scheduled cycles check the exchange calendar each minute and begin submitting at 09:35 New York. Completed historical inputs are refreshed after the exchange close plus a 20-minute publication allowance. Daily/weekly/monthly targets retain share counts while orders complete. Execution uses prior unadjusted closes as DAY limit references; fills are not guaranteed and this differs from historical next-close modeling.
 
-## Verification
+Default account allocation limit is $10,000 and position cap 20%; both are editable. Budgets reserve available funding. Source/dependency changes require reevaluation before activation/resume. Unknown/open/partial orders block new plans; an uncertain submission is never blindly resent. See [execution and credentials](docs/paper.md).
+
+## Verification and dependencies
 
 ```bash
 uv run pytest -q
 uv run python manage.py check
 uv run python manage.py makemigrations --check --dry-run
-```
-
-Rootless integration tests are opt-in after building the image:
-
-```bash
 LAB_TEST_CONTAINERS=1 uv run pytest tests/test_isolation_integration.py -q
 ```
 
-## Dependencies and reading guide
+Container checks are opt-in. Broker tests use fakes and submit no account orders. Server process checks are separately opt-in with `LAB_TEST_SERVER=1 uv run pytest tests/test_server_integration.py -q`.
 
-`pyproject.toml` is the direct dependency source; `uv.lock` is canonical. `requirements.txt` is the fully pinned portable export. After intentional dependency changes:
+Python 3.13 is specified by `pyproject.toml`; uv manages `.venv`. Direct dependencies live in that file, `uv.lock` is canonical, and `requirements.txt` is the pinned export. For intentional updates:
 
 ```bash
 uv lock
@@ -116,11 +83,14 @@ uv sync --locked
 uv export --no-emit-project --no-hashes --format requirements-txt --output-file requirements.txt
 ```
 
-- [Architecture and file walkthrough](docs/architecture.md)
-- [Project instructions for coding agents](AGENTS.md)
-- [Mathematics, timing, assumptions and limitations](docs/methodology.md)
-- [Hermes boundary and bounded research workflow](docs/hermes.md)
-- [Paper lifecycle and stop controls](docs/paper.md)
-- Local original book notes: `~/Library/math/markdown/portfolio-lab-index.md` (Boyd, Shreve I/II, ISLP, Casella–Berger; selected passages, source hashes, examples and code/test links).
+## Reading guide
 
-`optimizer/`, `strategies/` and `backtest/` import no Django. `research/` is the shared experiment application layer; `marketdata/` caches prices; `portfolio/` renders operator pages; `workers/` isolates source; `paper/` handles approved paper orders. The original `portfolio.OptimizationRun` model is retained for migration compatibility; the expanded experiment ledger is `research.Experiment`, with related immutable snapshots and source versions. SQLite, artifacts and secrets remain local and ignored.
+- [Architecture and code walkthrough](docs/architecture.md)
+- [Mathematics and limitations](docs/methodology.md)
+- [Dashboard/CLI workflows](docs/cli.md)
+- [Server installation](docs/server.md)
+- [Active strategies and credentials](docs/paper.md)
+- [Coding-agent instructions](AGENTS.md)
+- Optional original book notes: `~/Library/math/markdown/portfolio-lab-index.md`.
+
+`optimizer/`, `strategies/`, and `backtest/` have no Django imports. `research/` connects both interfaces to shared services; `marketdata/` handles bars; `portfolio/` presents results; `workers/` isolates submitted code; `paper/` manages account execution. Existing models/migrations and experiment evidence remain compatible. Databases, secrets, artifacts, and copyrighted PDFs stay outside Git.

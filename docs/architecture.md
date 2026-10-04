@@ -2,38 +2,40 @@
 
 ```mermaid
 flowchart LR
-  Operator[Authenticated operator] --> Django[Django UI]
-  Hermes[Hermes CLI · separate OS user] --> Socket[Unix socket research API]
-  Django --> Services[Shared application services]
-  Socket --> Services
-  Services --> Ledger[SQLite dataset / experiment / job ledger]
-  Worker[Serial trusted queue worker] --> Ledger
-  Worker --> Engine[Pure chronological evaluator]
-  Engine --> Builtins[Pure optimizer and strategy packages]
-  Engine --> Container[Rootless code container · prefix data only]
-  Operator --> Approval[Immutable paper approval]
-  Approval --> Broker[Separate Alpaca PAPER adapter]
+  User[Dashboard user] --> Web[Django pages]
+  Client[Person or agent CLI] --> Socket[Owner-only local socket]
+  Client --> Commands[Shared application commands]
+  Socket --> Commands
+  Web --> Commands
+  Commands --> Ledger[SQLite snapshots / versions / jobs / runs]
+  Worker[Automatic queue worker] --> Ledger
+  Worker --> Math[Pure strategy and backtest packages]
+  Math --> Optimizer[Covariance / CVXPY / risk metrics]
+  Worker --> Container[Isolated uploaded Python / notebooks]
+  Scheduler[Exchange-aware scheduler] --> Account[Multiple sleeves / account netting]
+  Commands --> Account
+  Account --> Broker[Fixed Alpaca paper adapter]
 ```
 
-## Files to read in order
+## Read the code in this order
 
-1. `strategies/catalog.py`: formulas and assumptions for each registered method.
-2. `optimizer/covariance.py`, `optimizer/advanced.py`, `optimizer/risk.py`: estimation, convex models, duals, and metrics. No Django imports.
-3. `strategies/builtin.py`: allocation and signal rules. Sample/Ledoit–Wolf/EWMA/PCA covariance; capped risk parity/HRP; Bayesian absolute views; lagged ridge. All inputs are explicit.
-4. `backtest/engine.py`: information timing, drift, cash, rebalancing and actual transaction costs. Signals after close execute next close. Fees solve a small fixed point because targets are fractions of wealth after costs.
-5. `research/models.py`: frozen dataset, versioned source, experiment ledger, durable job.
-6. `research/services.py`: freeze aligned prices, validate configurations, queue/run experiments, record git/source/dependency hashes and results.
-7. `research/jobs.py`: one consumer, failed/interrupted trial recording. Restarted work is marked failed rather than automatically rerun.
-8. `portfolio_lab/cli.py`, `research/rpc.py`: JSON command interface and limited Unix socket capabilities. A remote client loads no Django settings or `.env`.
-9. `workers/isolation.py`, `workers/entry.py`: rootless runtime checks, fixed image ID, bounded protocol and disposable containers. Source registration only parses; execution always occurs in the container.
-10. `portfolio/views.py`, `portfolio/forms.py`, templates/static: authenticated thin service callers, Plotly JSON, local KaTeX, sanitized text review.
-11. `paper/broker.py`, `paper/services.py`: paper endpoint, approval fingerprint, stale-data gate, hashed decision input snapshots, whole-share limit orders, durable intent, reconciliation and stop controls. Orders reference immutable `PaperDecision` inputs.
+1. `strategies/catalog.py`: available methods, equations, and assumptions. `strategies/recipes.py` composes forecasts, allocation, and overlays; incompatible choices are rejected.
+2. `optimizer/advanced.py`: convex programs, ratio transformations, signed bounds, duals, and the long-only frontier. `strategies/builtin.py` implements the existing allocations and covariance choices. These packages have no Django imports.
+3. `backtest/schedule.py` defines calendar periods. `backtest/engine.py` applies chronological signals, delayed execution, drift, costs, and optional short borrow/financing. Caps constrain rebalance targets, not intervening market drift.
+4. `research/models.py` stores immutable evidence and job state; `research/services.py` freezes/validates/runs experiments and hashes provenance. Execution-time provenance is recorded separately from older queued provenance when code changed before processing.
+5. `research/datasets.py` validates symbol/date/feed requests, fetches background previews, and accepts frozen snapshots with explicit coverage/exclusion metadata. Benchmark history can be separate from allocated assets.
+6. `research/commands.py` defines shared operations used by the UI and CLI. `portfolio_lab/cli.py` parses files/flags and selects direct or socket transport; `research/rpc.py` enforces owner-only access and recovers stale sockets. There is no agent-specific role.
+7. `research/jobs.py` serializes work with a host lock, records failures, and exposes health. `research/scheduler.py` refreshes completed execution inputs and triggers eligible account cycles. `portfolio_lab/app.py` starts the foreground stack; `server/` provides user services and an explicit installer.
+8. `portfolio/` contains thin forms/views, safe result presentation, local Plotly/KaTeX assets, progress polling, compare selection, trash/restore, and account controls.
+9. `workers/` validates rootless resource enforcement and runs submitted source/notebooks with chronological/training inputs only. Source registration never executes the submission.
+10. `paper/account.py` reserves sleeve funding, checks immutable execution versions, reconciles cumulative fills, freezes decisions, crosses internal demand, and submits residual account orders. `paper/broker.py` is the only actual trading adapter. `paper/services.py` retains compatibility names and historical-order reconciliation; it routes all new execution through account netting.
 
-## Deliberate boundaries
+## Persistent boundaries
 
-- One operator, local loopback UI, SQLite, one queue consumer, one unrevoked paper session.
-- Daily liquid ETF allocation. No live execution endpoint or configurable broker URL.
-- Holdout is operator-only at the socket interface; notebooks receive only training data. Builtin methods receive chronological prefixes.
-- A dataset digest covers prices and manifest; registration hashes exact Python source. Approved paper sessions bind configuration, dataset, strategy, evaluator/dependency provenance and reviewed results.
-- Validation and holdout use the same evaluator. A new trial ID is generated even for duplicate configurations so selection history remains visible.
-- Deployment, accounts for multiple researchers, options execution, geometry, cardinality mixed-integer models and a production market microstructure simulator are outside this implementation.
+- One owner, SQLite, localhost dashboard/SSH tunnel, one queue consumer, one scheduler, and several account sleeves.
+- `optimizer/`, `strategies/`, `backtest/` remain pure Python.
+- Dataset snapshots, strategy versions, results, and execution input records are retained. Trash affects visibility and cancels queued work; it does not rewrite evidence.
+- Signed portfolios are supported in research; connected-account execution remains long-only with whole-share limit orders. No live endpoint, options contracts, or ETF holdings-import feature exists.
+- Authenticated dashboard and owner-authorized CLI have equivalent actions. Uploaded code remains isolated independently of caller identity.
+- The original `portfolio.OptimizationRun`, `PaperDecision`, and `PaperOrder` records remain migration-compatible. New execution uses `AccountCycle` and `AccountOrder` linked to multiple `PaperSession` sleeves. Existing sessions migrate paused.
+- Source/runtime changes require reevaluation before activation/resume. Unknown submissions remain blocked rather than guessed or blindly resent.

@@ -1,0 +1,14 @@
+[Unit]
+Description=Portfolio Lab localhost dashboard
+PartOf=portfolio-lab.target
+
+[Service]
+WorkingDirectory=%h/Projects/portfolio-lab
+ExecStart=%h/.local/bin/uv run --locked gunicorn portfolio_lab.wsgi:application --bind 127.0.0.1:8000 --workers 1 --threads 4 --timeout 120
+Restart=on-failure
+RestartSec=5
+Environment=DJANGO_DEBUG=false
+Environment=LAB_SOCKET=
+
+[Install]
+WantedBy=portfolio-lab.target

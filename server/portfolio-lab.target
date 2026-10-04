@@ -1,0 +1,6 @@
+[Unit]
+Description=Portfolio Lab application
+Wants=portfolio-lab-web.service portfolio-lab-worker.service portfolio-lab-scheduler.service portfolio-lab-socket.service
+
+[Install]
+WantedBy=default.target

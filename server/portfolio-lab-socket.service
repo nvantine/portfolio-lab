@@ -1,0 +1,14 @@
+[Unit]
+Description=Portfolio Lab local full-capability CLI socket
+PartOf=portfolio-lab.target
+
+[Service]
+WorkingDirectory=%h/Projects/portfolio-lab
+RuntimeDirectory=portfolio-lab
+ExecStart=%h/.local/bin/uv run --locked portfolio-lab serve --socket %t/portfolio-lab/app.sock
+Restart=on-failure
+RestartSec=5
+Environment=LAB_SOCKET=
+
+[Install]
+WantedBy=portfolio-lab.target
