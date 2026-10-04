@@ -77,6 +77,13 @@ def test_foreground_stack_queue_dashboard_and_cli(tmp_path):
             assert browser.open(base+"/login/", data=body).status == 200
             assert run.encode() in browser.open(base+f"/runs/{run}/").read()
             assert b"chart-dialog" in browser.open(base+"/static/portfolio/lab.js").read()
+            assert b"startLivePage" in browser.open(base+"/static/portfolio/live.js").read()
+            before = json.loads(browser.open(base+"/activity/status/?scope=datasets").read())["revision"]
+            # A CLI-created snapshot changes the authenticated web revision.
+            command(client, "portfolio-lab", "datasets", "demo", "--seed", "99")
+            after = json.loads(browser.open(base+"/activity/status/?scope=datasets").read())["revision"]
+            assert after != before
+            assert b"data-live-region" in browser.open(base+"/datasets/").read()
             assert b"katex" in browser.open(base+"/static/vendor/katex/katex.min.css").read()
             command(client, "portfolio-lab", "runs", "trash", run)
             assert not json.loads(command(client, "portfolio-lab", "runs", "list"))
