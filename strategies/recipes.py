@@ -26,6 +26,8 @@ def validate_recipe(recipe):
         raise ValueError("Supply explicit fixed or benchmark weights")
     if allocator in {"max_sharpe", "max_diversification", "fixed_weights"} and (parameters.get("turnover_limit") is not None or parameters.get("turnover_penalty_bps", 0)):
         raise ValueError("This allocator does not support turnover constraints/penalties")
+    if recipe.get("overlay", "none") != "none" and parameters.get("turnover_limit") is not None:
+        raise ValueError("Volatility scaling cannot preserve an allocator's turnover limit; remove the overlay or the limit")
 
 
 def forecast(prices, returns, signal, parameters):

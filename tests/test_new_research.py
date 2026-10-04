@@ -32,6 +32,8 @@ def test_recipe_incompatible_components():
         validate_recipe({"signal": "momentum", "allocator": "min_variance"})
     with pytest.raises(ValueError, match="signed"):
         validate_recipe({"signal": "historical_mean", "allocator": "max_sharpe", "parameters": {"allow_short": True}})
+    with pytest.raises(ValueError, match="turnover limit"):
+        validate_recipe({"signal": "momentum", "allocator": "mean_variance", "overlay": "volatility_target", "parameters": {"turnover_limit": .1}})
 
 
 def test_signed_optimizer_matches_scipy():
