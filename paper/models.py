@@ -16,9 +16,15 @@ class PaperSession(models.Model):
     slot = models.PositiveSmallIntegerField(default=1, editable=False)
     target_month = models.CharField(max_length=7, blank=True)
     targets = models.JSONField(default=dict)
+    scheduled = models.BooleanField(default=False)
+    state = models.CharField(max_length=16, default="paused")
+    holdings = models.JSONField(default=dict)
+    cash = models.DecimalField(max_digits=18, decimal_places=6, default=0)
+    last_cycle_at = models.DateTimeField(null=True, blank=True)
+    initialized = models.BooleanField(default=False)
 
     class Meta:
-        constraints = [models.UniqueConstraint(fields=["slot"], condition=models.Q(revoked=False), name="one_unrevoked_paper_session")]
+        constraints = []
 
 
 class PaperDecision(models.Model):
@@ -43,4 +49,38 @@ class PaperOrder(models.Model):
     status = models.CharField(max_length=32, default="intent")
     filled_qty = models.DecimalField(max_digits=18, decimal_places=6, default=0)
     filled_price = models.DecimalField(max_digits=18, decimal_places=6, null=True)
+    error = models.TextField(blank=True)
+
+
+class AccountPolicy(models.Model):
+    id = models.PositiveSmallIntegerField(primary_key=True, default=1, editable=False)
+    budget = models.DecimalField(max_digits=18, decimal_places=2, default=10000)
+    cap = models.FloatField(default=.2)
+
+
+class AccountCycle(models.Model):
+    created_at = models.DateTimeField(auto_now_add=True)
+    trading_date = models.DateField()
+    digest = models.CharField(max_length=64, unique=True)
+    inputs = models.JSONField()
+    targets = models.JSONField()
+    transfers = models.JSONField(default=list)
+
+
+class AccountOrder(models.Model):
+    cycle = models.ForeignKey(AccountCycle, on_delete=models.PROTECT)
+    client_order_id = models.CharField(max_length=48, unique=True)
+    trading_date = models.DateField()
+    symbol = models.CharField(max_length=12)
+    side = models.CharField(max_length=4)
+    qty = models.PositiveIntegerField()
+    limit_price = models.DecimalField(max_digits=12, decimal_places=2)
+    allocations = models.JSONField()
+    broker_id = models.CharField(max_length=64, blank=True)
+    status = models.CharField(max_length=32, default="intent")
+    filled_qty = models.DecimalField(max_digits=18, decimal_places=6, default=0)
+    filled_price = models.DecimalField(max_digits=18, decimal_places=6, null=True)
+    applied_qty = models.DecimalField(max_digits=18, decimal_places=6, default=0)
+    applied_notional = models.DecimalField(max_digits=18, decimal_places=6, default=0)
+    applied_allocations = models.JSONField(default=dict)
     error = models.TextField(blank=True)

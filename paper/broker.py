@@ -31,6 +31,7 @@ class PaperBroker:
         positions = self.client.get_all_positions()
         orders = self.client.get_orders(GetOrdersRequest(status=QueryOrderStatus.OPEN, limit=500))
         return {"open": clock.is_open, "date": today, "previous_session": max(day.date for day in calendar),
+                "equity": Decimal(account.equity), "timestamp": clock.timestamp.isoformat(),
                 "cash": Decimal(account.cash), "blocked": bool(account.trading_blocked or account.account_blocked),
                 "positions": {p.symbol: {"qty": Decimal(p.qty), "value": Decimal(p.market_value)} for p in positions},
                 "open_orders": [str(order.id) for order in orders]}
