@@ -70,8 +70,10 @@ def dispatch(values, user=None):
             with transaction.atomic():
                 job = Job.objects.get(pk=values["id"])
                 if job.status != "queued": raise ValueError("Only queued jobs can be canceled")
+                from django.utils import timezone
                 job.status = "canceled"
-                job.save(update_fields=["status"])
+                job.finished_at = timezone.now()
+                job.save(update_fields=["status", "finished_at"])
                 if job.experiment_id:
                     job.experiment.status = "canceled"
                     job.experiment.save(update_fields=["status"])

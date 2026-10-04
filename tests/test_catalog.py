@@ -16,6 +16,9 @@ def history():
 @pytest.mark.parametrize("method", list(METHODS))
 def test_all_registered_methods(history, method):
     params = {"method": method, "cap": .25, "lookback": 100, "views": {"SPY": .001}}
+    if method == "custom":
+        with pytest.raises(ValueError, match="registered Python"): target_weights(history, {}, params)
+        return
     if method == "tracking_error": params["benchmark_weights"] = dict.fromkeys(history.columns, 1/6)
     if method == "fixed_weights": params["fixed_weights"] = dict.fromkeys(history.columns, 1/6)
     if method == "recipe": params["recipe"] = {"signal": "none", "allocator": "min_variance"}

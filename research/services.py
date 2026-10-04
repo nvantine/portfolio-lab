@@ -62,8 +62,9 @@ def register_strategy(name, source):
     if not name or len(name) > 120 or len(source.encode()) > 100_000:
         raise ValueError("Strategy needs a short name and source under 100 KB")
     import ast
-    tree = ast.parse(source)
-    if not any(isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "target_weights" for node in tree.body):
+    try: tree = ast.parse(source)
+    except SyntaxError as exc: raise ValueError(f"Invalid Python syntax at line {exc.lineno}") from None
+    if not any(isinstance(node, ast.FunctionDef) and node.name == "target_weights" and len(node.args.args) == 3 for node in tree.body):
         raise ValueError("Define target_weights(history, current_weights, parameters)")
     value, _ = StrategyVersion.objects.get_or_create(digest=hashlib.sha256(source.encode()).hexdigest(), defaults={"name": name, "source": source})
     return value
@@ -94,6 +95,7 @@ def provenance():
 
 
 def validate_config(config, agent=False):
+    if not isinstance(config, dict): raise ValueError("Experiment config must be a JSON object")
     config = dict(config)
     json.dumps(config, allow_nan=False)
     if set(config) - {"dataset", "method", "strategy", "parameters", "seed", "window", "hypothesis", "schema"}:
@@ -109,6 +111,7 @@ def validate_config(config, agent=False):
         raise ValueError("Seed must be an integer between 0 and 2^32-1")
     if not isinstance(config.get("hypothesis", ""), str) or len(config.get("hypothesis", "")) > 4000:
         raise ValueError("Hypothesis must be text under 4000 characters")
+    if not isinstance(config.get("parameters", {}), dict): raise ValueError("Parameters must be a JSON object")
     parameters = dict(config.get("parameters", {}))
     allowed = {"cap", "lookback", "covariance", "risk_aversion", "turnover_limit", "cost_bps", "robust_radius", "confidence", "views", "view_uncertainty", "tau", "ridge_alpha", "target_volatility", "rebalance", "recipe", "fixed_weights", "benchmark_weights", "allow_short", "net_exposure", "gross_limit", "short_cap", "borrow_rate", "financing_rate", "ewma_decay", "turnover_penalty_bps"}
     if set(parameters) - allowed:
@@ -223,9 +226,10 @@ def run_experiment(run):
 
 def queue_notebook(dataset_id, notebook):
     import nbformat
-    nbformat.validate(nbformat.reads(json.dumps(notebook), as_version=4))
     if len(json.dumps(notebook)) > 1_000_000:
         raise ValueError("Notebook exceeds 1 MB")
+    try: nbformat.validate(nbformat.reads(json.dumps(notebook), as_version=4))
+    except Exception: raise ValueError("Invalid notebook structure; submit a version 4 .ipynb file") from None
     dataset = Dataset.objects.get(pk=dataset_id)
     materialize(dataset)
     job = Job.objects.create(kind="notebook", payload={"dataset": dataset.pk, "notebook": notebook, "notebook_digest": digest(notebook), "provenance": provenance()})

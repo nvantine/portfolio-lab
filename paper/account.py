@@ -63,6 +63,7 @@ def set_limits(budget=None, cap=None):
 
 def check_version(session):
     run = session.experiment
+    materialize(run.dataset)
     if run.status != "succeeded" or fingerprint(run) != session.fingerprint:
         raise ValueError("Activation no longer matches the immutable experiment")
     current = provenance()
@@ -113,6 +114,7 @@ def status(broker=None):
         "sessions": [{"id": s.pk, "run": str(s.experiment_id), "method": s.experiment.config.get("method"), "state": s.state, "scheduled": s.scheduled, "budget": str(s.budget), "cash": str(s.cash), "holdings": s.holdings, "last_cycle": s.last_cycle_at.isoformat() if s.last_cycle_at else None,
                       "next_cycle": "Next eligible exchange session after 09:35 New York; targets follow configured rebalance" if s.scheduled and s.active else "Manual / paused", "observations": s.observations[-8:]} for s in sessions],
         "orders": list(AccountOrder.objects.order_by("-pk").values("client_order_id", "symbol", "side", "qty", "status", "filled_qty", "filled_price", "error")[:100])}
+    result["legacy_orders"] = list(PaperOrder.objects.order_by("-pk").values("client_order_id", "symbol", "side", "qty", "status", "filled_qty")[:100])
     try:
         state = broker_client(broker).state()
         managed = {}
@@ -340,7 +342,8 @@ def cycle(broker=None, histories=None, scheduled_only=False):
             if any(not PaperSession.objects.get(pk=s.pk).active for s in enabled):
                 return {"status": "waiting", "reason": "Strategy paused during evaluation"}
             record, created = AccountCycle.objects.get_or_create(digest=digest({"inputs": inputs, "targets": plans}), defaults={"trading_date": state["date"], "inputs": inputs, "targets": plans})
-            if not created: return {"status": "evaluated", "submitted": []}
+            if not created and record.transfers:
+                raise ValueError("Current ledger conflicts with previously recorded internal transfers")
             for sleeve in enabled:
                 if str(sleeve.pk) in histories_saved:
                     row = histories_saved[str(sleeve.pk)]

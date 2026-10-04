@@ -170,7 +170,7 @@ def charts(value):
 
 @operator
 def results(request, key=None):
-    run = get_object_or_404(Experiment, pk=key) if key else Experiment.objects.first()
+    run = get_object_or_404(Experiment, pk=key) if key else Experiment.objects.filter(trashed_at__isnull=True).first()
     plots = charts(run.results) if run and run.status == "succeeded" else []
     job = Job.objects.filter(experiment=run).first() if run else None
     return render(request, "portfolio/results.html", {"run": run, "job": job, "plots": plots, "formula": METHODS.get(run.config.get("method"), ("", ""))[0] if run else "", "assumptions": METHODS.get(run.config.get("method"), ("", ""))[1] if run else "", "parameters": run.config if run else {}, "report": safe_markdown(report(run)) if run else ""})

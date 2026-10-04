@@ -38,8 +38,13 @@ def perform(job):
     try:
         if job.kind == "experiment":
             run = job.experiment
+            from research.services import provenance
+            execution = provenance()
+            if any(run.provenance.get(key) != execution.get(key) for key in ("source_digest", "lock_digest", "versions", "python")):
+                execution["queued_provenance"] = run.provenance
+            run.provenance = execution
             run.status = "running"
-            run.save(update_fields=["status"])
+            run.save(update_fields=["status", "provenance"])
             run.results = run_experiment(run)
             # Guarantee JSON never contains NaN/Infinity.
             json.dumps(run.results, allow_nan=False)
@@ -94,6 +99,7 @@ def work(once=False):
                     job.status, job.started_at = "running", timezone.now()
                     job.save(update_fields=["status", "started_at"])
             if job:
+                heartbeat("worker", status="running", job_id=str(job.pk))
                 perform(job)
             if once:
                 return public_job(job) if job else {"status": "idle"}

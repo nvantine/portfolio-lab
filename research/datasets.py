@@ -18,7 +18,8 @@ def symbols(values):
 
 def queue_fetch(tickers, start, end, name, feed="iex", benchmark="SPY", parent=None):
     tickers = symbols(tickers)
-    first, last = date.fromisoformat(str(start)), date.fromisoformat(str(end))
+    try: first, last = date.fromisoformat(str(start)), date.fromisoformat(str(end))
+    except ValueError: raise ValueError("Dates must use YYYY-MM-DD") from None
     if first >= last or last >= date.today():
         raise ValueError("Choose an ordered historical date range ending before today")
     if feed not in {"iex", "sip"}:

@@ -118,3 +118,38 @@ def test_signed_cannot_activate_and_changed_version(ready):
     run.save()
     with pytest.raises(ValueError, match="Signed"):
         account.activate(run.pk, 3000, user=user, broker=broker)
+
+
+@pytest.mark.django_db(transaction=True)
+def test_crash_after_decision_before_intent_can_resume(ready, monkeypatch):
+    run, user, frame, broker = ready
+    sleeve = account.activate(run.pk, 3000, user=user, broker=broker)["session"]
+    original = AccountOrder.objects.get_or_create
+    def crash(**kwargs): raise RuntimeError("Interrupted before intent")
+    monkeypatch.setattr(AccountOrder.objects, "get_or_create", crash)
+    with pytest.raises(RuntimeError): account.cycle(broker, {sleeve: frame})
+    assert AccountCycle.objects.count() == 1 and not AccountOrder.objects.exists()
+    monkeypatch.setattr(AccountOrder.objects, "get_or_create", original)
+    assert len(account.cycle(broker, {sleeve: frame})["submitted"]) == 6
+
+
+@pytest.mark.django_db(transaction=True)
+def test_monthly_does_not_rebalance_filled_shares_daily(ready):
+    run, user, frame, broker = ready
+    sleeve = account.activate(run.pk, 3000, user=user, broker=broker)["session"]
+    account.cycle(broker, {sleeve: frame})
+    broker.day = date(2024, 6, 5)
+    assert account.cycle(broker, {sleeve: frame})["status"] == "idle"
+    assert len(broker.submitted) == 6
+
+
+@pytest.mark.django_db(transaction=True)
+def test_external_fill_then_close_stops_sleeve(ready):
+    run, user, frame, broker = ready
+    sleeve = account.activate(run.pk, 3000, user=user, broker=broker)["session"]
+    account.cycle(broker, {sleeve: frame})
+    account.control(sleeve, "close", broker)
+    broker.day = date(2024, 6, 5)
+    account.cycle(broker)
+    assert PaperSession.objects.get(pk=sleeve).state == "stopped"
+    assert PaperSession.objects.get(pk=sleeve).cash == 3000
