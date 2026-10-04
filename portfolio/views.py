@@ -21,7 +21,8 @@ def home(request):
     form = ExperimentForm(request.POST or None)
     if request.method == "POST" and form.is_valid():
         try:
-            queued = queue_experiment(form.config())
+            from research.commands import dispatch
+            queued = dispatch({"group": "experiments", "action": "run", "config": form.config()}, user=request.user)[0]
             return redirect("run", key=queued["run_id"])
         except ValueError as exc:
             form.add_error(None, str(exc))
@@ -45,9 +46,79 @@ def run_action(request, key, action):
 
 
 @operator
+def datasets_page(request):
+    from portfolio.forms import DatasetForm
+    from research.commands import dispatch
+    from marketdata.universe import DEFAULT_ETFS
+    form = DatasetForm(request.POST or None)
+    outcome = None
+    if request.method == "POST":
+        try:
+            action = request.POST.get("action", "create")
+            if action == "create" and form.is_valid():
+                outcome = dispatch(dict(form.cleaned_data, group="datasets", action="create"), user=request.user)
+            elif action in {"accept", "refresh", "demo"}:
+                outcome = dispatch({"group": "datasets", "action": action, "id": request.POST.get("id"), "accept_reduced": request.POST.get("accept_reduced") == "on"}, user=request.user)
+            if outcome: messages.success(request, f"Dataset action: {outcome.get('job_id') or outcome.get('dataset')}")
+        except ValueError as exc:
+            messages.error(request, str(exc))
+    return render(request, "portfolio/datasets.html", {"form": form, "datasets": Dataset.objects.all(), "jobs": Job.objects.filter(kind="dataset").order_by("-created_at")[:30], "preset": " ".join(DEFAULT_ETFS)})
+
+
+@operator
+def strategies_page(request):
+    from portfolio.forms import RecipeForm
+    from research.commands import dispatch
+    from research.models import StrategyVersion
+    form = RecipeForm(request.POST or None)
+    if request.method == "POST":
+        try:
+            action = request.POST.get("action", "recipe")
+            if action == "recipe" and form.is_valid():
+                data = dict(form.cleaned_data)
+                name = data.pop("name")
+                dispatch({"group": "strategies", "action": "recipe", "name": name, "recipe": data}, user=request.user)
+                messages.success(request, "Recipe version registered. Select it in Research to run an experiment.")
+            elif action in {"register", "notebook"}:
+                upload = request.FILES.get("source")
+                if upload and upload.size > 1_000_000: raise ValueError("Source exceeds 1 MB")
+                source = upload.read().decode("utf-8") if upload else request.POST.get("source", "")
+                command = {"group": "strategies", "action": "register", "source": source, "name": request.POST.get("name", "")}
+                if action == "notebook": command = {"group": "notebooks", "action": "run", "source": source, "dataset": int(request.POST["dataset"])}
+                dispatch(command, user=request.user)
+                messages.success(request, "Source registered/submitted. Notebook results appear under Jobs.")
+        except (ValueError, UnicodeError) as exc:
+            messages.error(request, str(exc))
+    return render(request, "portfolio/strategies.html", {"form": form, "strategies": StrategyVersion.objects.all(), "datasets": Dataset.objects.all()})
+
+
+@operator
 def job_status(request, key):
     from research.jobs import public_job, health
     return JsonResponse(dict(public_job(get_object_or_404(Job, pk=key)), health=health()))
+
+
+@operator
+@require_POST
+def cancel_job(request, key):
+    from research.commands import dispatch
+    try: dispatch({"group": "jobs", "action": "cancel", "id": str(key)}, user=request.user)
+    except ValueError as exc: messages.error(request, str(exc))
+    return redirect("home")
+
+
+@operator
+def run_download(request, key, format):
+    from research.commands import dispatch
+    if format == "json":
+        value = dispatch({"group": "runs", "action": "show", "id": str(key)}, user=request.user)
+        response = HttpResponse(json.dumps(value, indent=2, default=str), content_type="application/json")
+    elif format == "md":
+        value = dispatch({"group": "reports", "action": "export", "id": str(key)}, user=request.user)
+        response = HttpResponse(value["markdown"], content_type="text/markdown")
+    else: return HttpResponse(status=400)
+    response["Content-Disposition"] = f'attachment; filename="experiment-{key}.{format}"'
+    return response
 
 
 def charts(value):
@@ -68,7 +139,8 @@ def charts(value):
     figures.append(figure)
     figure = go.Figure()
     for ticker in last:
-        figure.add_trace(go.Scatter(x=dates, y=[row[ticker] for row in value["weights"]], stackgroup="one", name=ticker))
+        signed = any(weight < 0 for row in value["weights"] for weight in row.values())
+        figure.add_trace(go.Scatter(x=dates, y=[row[ticker] for row in value["weights"]], stackgroup=None if signed else "one", name=ticker))
     figure.update_layout(title="Allocations through time")
     figures.append(figure)
     import pandas as pd
@@ -90,7 +162,8 @@ def charts(value):
         figure.add_trace(go.Scatter(y=values, name=label))
     figure.update_layout(title="Physical GBM-style simulation · training data only")
     figures.append(figure)
-    for figure in figures:
+    for index, figure in enumerate(figures):
+        if index < 6: figure.update_layout(meta={"sync_time": True})
         figure.update_layout(template="plotly_white", height=360, margin=dict(l=45, r=20, t=50, b=35))
     return [figure.to_json() for figure in figures]
 
@@ -111,28 +184,31 @@ def notebook_review(request, key):
 @operator
 @require_POST
 def paper_action(request, action, key):
-    from paper.services import approve, stop, tick
+    from research.commands import dispatch
     try:
-        if action == "approve":
-            approve(key, request.user, budget=request.POST.get("budget", 10000))
-        elif action == "pause":
-            stop(key)
-        elif action == "revoke":
-            stop(key, revoke=True)
-        elif action == "tick":
-            tick(key)
+        if action in {"activate", "approve"}:
+            dispatch({"group": "strategies", "action": "activate", "run": key, "budget": request.POST.get("budget", 1000), "scheduled": request.POST.get("scheduled") == "on"}, user=request.user)
+        elif action in {"pause", "resume", "close", "revoke"}:
+            dispatch({"group": "strategies", "action": action, "session": int(key)}, user=request.user)
+        elif action in {"cycle", "tick"}:
+            dispatch({"group": "strategies", "action": "cycle"}, user=request.user)
+        elif action == "limits":
+            dispatch({"group": "strategies", "action": "limits", "budget": request.POST["budget"], "cap": float(request.POST["cap"])}, user=request.user)
+        elif action == "adopt":
+            dispatch({"group": "strategies", "action": "adopt", "session": int(key), "symbol": request.POST["symbol"], "qty": int(request.POST["qty"])}, user=request.user)
         else:
             return HttpResponse(status=400)
-        messages.success(request, "Paper action completed. Review session and order state.")
+        messages.success(request, "Strategy action completed. Review strategy and order state.")
     except Exception as exc:
-        messages.error(request, str(exc) if isinstance(exc, ValueError) else "Paper action failed. Check broker configuration locally.")
+        messages.error(request, str(exc) if isinstance(exc, ValueError) else "Strategy action failed. Check broker configuration locally.")
     return redirect("paper")
 
 
 @operator
 def paper_page(request):
-    from paper.services import status
-    return render(request, "portfolio/paper.html", {"state": status(), "sessions": PaperSession.objects.all(), "runs": Experiment.objects.filter(status="succeeded", config__window="validation")[:20]})
+    from paper.account import status
+    from research.jobs import health
+    return render(request, "portfolio/paper.html", {"state": status(), "health": health(), "sessions": PaperSession.objects.all(), "runs": Experiment.objects.filter(trashed_at__isnull=True, status="succeeded", config__window="validation")[:100]})
 
 
 @operator
@@ -151,5 +227,11 @@ def compare(request):
         if run.status == "succeeded":
             figure.add_trace(go.Scatter(x=run.results["dates"], y=run.results["wealth"], name=f"{run.config['method']} · {str(run.pk)[:8]}"))
     figure.update_layout(template="plotly_white", title="Growth of $1")
+    figure.update_layout(meta={"sync_time": True})
+    drawdown = go.Figure()
+    for run in runs:
+        if run.status == "succeeded": drawdown.add_trace(go.Scatter(x=run.results["dates"], y=run.results["drawdown"], name=f"{run.config['method']} · {str(run.pk)[:8]}"))
+    drawdown.update_layout(template="plotly_white", title="Drawdown comparison", meta={"sync_time": True})
     signatures = {(r.dataset_id, r.config.get("window"), r.config.get("seed"), r.config.get("parameters", {}).get("cost_bps", 10)) for r in runs}
-    return render(request, "portfolio/compare.html", {"runs": runs, "available": Experiment.objects.filter(trashed_at__isnull=True, status="succeeded")[:100], "mismatch": len(signatures) > 1, "ids": ids, "plot": figure.to_json() if runs else None})
+    metric_names = sorted({name for run in runs for name in run.results.get("metrics", {})})
+    return render(request, "portfolio/compare.html", {"runs": runs, "metric_names": metric_names, "available": Experiment.objects.filter(trashed_at__isnull=True, status="succeeded")[:100], "mismatch": len(signatures) > 1, "ids": ids, "plots": [figure.to_json(), drawdown.to_json()] if runs else []})

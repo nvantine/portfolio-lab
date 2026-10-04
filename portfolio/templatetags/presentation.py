@@ -8,6 +8,11 @@ register = template.Library()
 
 
 @register.filter
+def lookup(value, key):
+    return value.get(key) if isinstance(value, dict) else None
+
+
+@register.filter
 def pretty(value):
     if isinstance(value, dict):
         rows = "".join(str(format_html("<tr><th>{}</th><td>{}</td></tr>", str(key).replace("_", " "), pretty(item))) for key, item in value.items())

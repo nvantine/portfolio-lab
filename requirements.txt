@@ -44,6 +44,8 @@ executing==2.2.1
     # via stack-data
 fastjsonschema==2.22.2
     # via nbformat
+gunicorn==23.0.0
+    # via portfolio-lab
 highspy==1.15.1
     # via cvxpy
 idna==3.20
@@ -117,6 +119,7 @@ osqp==1.1.3
     # via cvxpy
 packaging==26.3
     # via
+    #   gunicorn
     #   ipykernel
     #   plotly
     #   pytest
@@ -243,3 +246,5 @@ webencodings==0.6.1
     # via bleach
 websockets==17.2
     # via alpaca-py
+whitenoise==6.12.0
+    # via portfolio-lab

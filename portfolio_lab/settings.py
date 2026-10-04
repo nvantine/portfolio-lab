@@ -16,10 +16,10 @@ ALLOWED_HOSTS = ["localhost", "127.0.0.1", "testserver"]
 
 INSTALLED_APPS = [
     "django.contrib.auth",
+    "django.contrib.staticfiles",
     "django.contrib.contenttypes",
     "django.contrib.sessions",
     "django.contrib.messages",
-    "django.contrib.staticfiles",
     "marketdata",
     "portfolio",
     "research",
@@ -28,6 +28,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -62,6 +63,7 @@ TIME_ZONE = "America/Chicago"
 USE_I18N = True
 USE_TZ = True
 STATIC_URL = "static/"
+STATIC_ROOT = BASE_DIR / "staticfiles"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # Loaded at startup but required only for commands that contact Alpaca.
@@ -70,6 +72,7 @@ ALPACA_SECRET_KEY = os.getenv("ALPACA_SECRET_KEY", "")
 LAB_DATA_DIR = Path(os.getenv("LAB_DATA_DIR", str(BASE_DIR / "artifacts")))
 LAB_CONTAINER_RUNTIME = os.getenv("LAB_CONTAINER_RUNTIME", "docker")
 LAB_WORKER_IMAGE = os.getenv("LAB_WORKER_IMAGE", "portfolio-lab-worker:0.2")
+LAB_OPERATOR_USERNAME = os.getenv("LAB_OPERATOR_USERNAME", "")
 LOGIN_URL = "/login/"
 LOGIN_REDIRECT_URL = "/"
 LOGOUT_REDIRECT_URL = "/login/"

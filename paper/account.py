@@ -92,7 +92,10 @@ def activate(run_id, budget, user=None, scheduled=True, broker=None):
         sessions = list(PaperSession.objects.filter(revoked=False))
         if pending(): raise ValueError("Reconcile pending/unknown account orders before activation")
         reserved = sum((s.budget for s in sessions), D(0))
-        state = broker_client(broker).state()
+        client = broker_client(broker)
+        if hasattr(client, "ensure_assets"):
+            client.ensure_assets(run.dataset.manifest.get("assets", run.dataset.snapshot["tickers"]))
+        state = client.state()
         equity = state.get("equity", state["cash"] + sum((p["value"] for p in state["positions"].values()), D(0)))
         reserved_cash = sum((s.cash for s in sessions), D(0))
         if reserved + amount > min(limits.budget, equity) or amount > state["cash"] - reserved_cash:
@@ -199,6 +202,7 @@ def control(session_id, action, broker=None):
                 raise ValueError("Holdings remain; pause or use close-and-stop")
             sleeve.active = action == "close"
             sleeve.state = "closing" if action == "close" else "stopped" if action == "revoke" else "paused"
+            if action == "close": sleeve.scheduled = True
             sleeve.revoked = action == "revoke"
             sleeve.initialized = sleeve.initialized or action == "close"
         else: raise ValueError("Unknown strategy control")
@@ -280,6 +284,10 @@ def cycle(broker=None, histories=None, scheduled_only=False):
         enabled = [s for s in sleeves if s.active and (s.scheduled or not scheduled_only)]
         if not enabled: return {"status": "idle"}
         if any(not s.initialized for s in enabled): raise ValueError("Legacy sessions require adoption before resuming")
+        for sleeve in enabled:
+            if sleeve.state != "closing": check_version(sleeve)
+        if all(s.state != "closing" and s.target_month == period(state["date"], s.experiment.config["parameters"].get("rebalance", "monthly")) and s.desired_shares and all(D(s.desired_shares.get(t, "0")) == D(s.holdings.get(t, "0")) for t in set(s.desired_shares) | set(s.holdings)) for s in enabled):
+            return {"status": "idle", "reason": "Targets filled; waiting for next rebalance period"}
         limits = policy()
         managed = {}
         for s in sleeves:
@@ -295,7 +303,6 @@ def cycle(broker=None, histories=None, scheduled_only=False):
             if sleeve.state == "closing":
                 plans[str(sleeve.pk)] = {t: "0" for t in sleeve.holdings}
                 continue
-            check_version(sleeve)
             frame = histories[sleeve.pk] if histories is not None else history_for(sleeve, state["previous_session"])
             if frame.index[-1].date() != state["previous_session"]: raise ValueError("Refresh history through the previous exchange session")
             tickers = list(frame)
@@ -319,8 +326,8 @@ def cycle(broker=None, histories=None, scheduled_only=False):
                     targets = target_weights(frame, current, params)
             weights = validate_weights(targets, tickers, params.get("cap", .2))
             # Numerical allocator noise must not turn 4.999999999999999 into 4.
-            desired = {t: str(int(D(str(w))*allocation_capital/raw[t]+D("1e-10"))) for t, w in weights.items()}
-            if any(D(q)*raw[t] > sleeve.budget*D(str(limits.cap))+D(".01") for t, q in desired.items()): raise ValueError("Position cap exceeded")
+            desired = sleeve.desired_shares if sleeve.target_month == group and sleeve.desired_shares else {t: str(int(D(str(w))*allocation_capital/raw[t]+D("1e-10"))) for t, w in weights.items()}
+            if sleeve.target_month != group and any(D(q)*raw[t] > sleeve.budget*D(str(limits.cap))+D(".01") for t, q in desired.items()): raise ValueError("Position cap exceeded")
             plans[str(sleeve.pk)] = desired
             histories_saved[str(sleeve.pk)] = {"dates": [str(d.date()) for d in frame.index], "tickers": tickers, "prices": frame.to_numpy().tolist(), "fingerprint": sleeve.fingerprint, "period": group, "weights": weights.to_dict()}
         all_tickers = sorted({t for desired in plans.values() for t in desired} | set(managed))
@@ -330,13 +337,16 @@ def cycle(broker=None, histories=None, scheduled_only=False):
         inputs = {"histories": histories_saved, "raw_closes": {t: str(p) for t, p in raw.items()}, "holdings": {str(s.pk): s.holdings for s in sleeves}, "cash": {str(s.pk): str(s.cash) for s in sleeves}, "account": {"positions": {t: {k: str(v) for k, v in p.items()} for t, p in state["positions"].items()}, "cash": str(state["cash"])}, "date": str(state["date"])}
         instructions = []
         with transaction.atomic():
+            if any(not PaperSession.objects.get(pk=s.pk).active for s in enabled):
+                return {"status": "waiting", "reason": "Strategy paused during evaluation"}
             record, created = AccountCycle.objects.get_or_create(digest=digest({"inputs": inputs, "targets": plans}), defaults={"trading_date": state["date"], "inputs": inputs, "targets": plans})
             if not created: return {"status": "evaluated", "submitted": []}
             for sleeve in enabled:
                 if str(sleeve.pk) in histories_saved:
                     row = histories_saved[str(sleeve.pk)]
                     sleeve.target_month, sleeve.targets = row["period"], row["weights"]
-                    sleeve.save(update_fields=["target_month", "targets"])
+                    sleeve.desired_shares = plans[str(sleeve.pk)]
+                    sleeve.save(update_fields=["target_month", "targets", "desired_shares"])
             for ticker in all_tickers:
                 if raw[ticker] <= 0: raise ValueError("Invalid reference price")
                 buyers, sellers = [], []

@@ -52,16 +52,13 @@ def test_failed_job_is_saved(prices, settings, tmp_path):
 
 
 @pytest.mark.django_db
-def test_agent_permissions_and_holdout(prices):
+def test_cli_full_parity_and_holdout(prices):
     dataset = freeze_frame(prices)
-    with pytest.raises(ValueError, match="holdout"):
-        dispatch({"group": "experiments", "action": "run", "config": {"dataset": dataset.pk, "window": "holdout"}}, agent=True)
-    with pytest.raises(ValueError):
-        dispatch({"group": "paper", "action": "tick", "session": 1}, agent=True)
-    run = Experiment.objects.create(dataset=dataset, config={"window": "holdout"})
-    assert dispatch({"group": "runs", "action": "list"}, agent=True) == []
-    with pytest.raises(ValueError):
-        dispatch({"group": "runs", "action": "compare", "ids": [str(run.pk)]}, agent=True)
+    result = dispatch({"group": "experiments", "action": "run", "config": {"dataset": dataset.pk, "window": "holdout"}}, agent=True)
+    run = Experiment.objects.get(pk=result[0]["run_id"])
+    assert run.config["window"] == "holdout"
+    assert dispatch({"group": "runs", "action": "list"}, agent=True)[0]["id"] == str(run.pk)
+    assert dispatch({"group": "runs", "action": "compare", "ids": [str(run.pk)]}, agent=True)["matching_assumptions"]
 
 
 @pytest.mark.django_db
@@ -98,8 +95,8 @@ def test_markdown_sanitized():
 def test_agent_daily_trial_budget(prices):
     dataset = freeze_frame(prices)
     Experiment.objects.bulk_create([Experiment(dataset=dataset, status="failed") for _ in range(24)])
-    with pytest.raises(ValueError, match="Daily"):
-        dispatch({"group": "experiments", "action": "run", "config": {"dataset": dataset.pk}}, agent=True)
+    result = dispatch({"group": "experiments", "action": "run", "config": {"dataset": dataset.pk}}, agent=True)
+    assert result[0]["status"] == "queued"
 
 
 @pytest.mark.django_db

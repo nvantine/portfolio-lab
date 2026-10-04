@@ -1,4 +1,4 @@
-"""JSON CLI. LAB_SOCKET selects an unprivileged Hermes client with no Django load."""
+"""JSON CLI. LAB_SOCKET selects an owner-authorized socket client with no Django load."""
 import argparse
 import contextlib
 import io
@@ -60,6 +60,49 @@ def parser():
     tick.add_argument("--session", required=True, type=int)
     serve = groups.add_parser("serve")
     serve.add_argument("--socket", required=True)
+    app = groups.add_parser("app").add_subparsers(dest="action", required=True)
+    app.add_parser("run").add_argument("--port", type=int, default=8000)
+    for action in ("trash", "restore"):
+        runs.add_parser(action).add_argument("id")
+    runs.choices["list"].add_argument("--trash", action="store_true")
+    create = datasets.add_parser("create")
+    create.add_argument("tickers", nargs="+")
+    create.add_argument("--start", required=True)
+    create.add_argument("--end", required=True)
+    create.add_argument("--name", required=True)
+    create.add_argument("--feed", choices=["iex", "sip"], default="iex")
+    create.add_argument("--benchmark", default="SPY")
+    accept = datasets.add_parser("accept")
+    accept.add_argument("id")
+    accept.add_argument("--accept-reduced", action="store_true")
+    refresh_dataset = datasets.add_parser("refresh")
+    refresh_dataset.add_argument("id", type=int)
+    refresh_dataset.add_argument("--end")
+    strategies.add_parser("show").add_argument("id")
+    recipe = strategies.add_parser("recipe")
+    recipe.add_argument("recipe")
+    recipe.add_argument("--name", required=True)
+    strategies.add_parser("status")
+    activate = strategies.add_parser("activate")
+    activate.add_argument("run")
+    activate.add_argument("--budget", required=True, type=float)
+    activate.add_argument("--manual", action="store_true")
+    strategies.add_parser("cycle")
+    for action in ("pause", "resume", "close", "revoke"):
+        strategies.add_parser(action).add_argument("session", type=int)
+    adopt = strategies.add_parser("adopt")
+    adopt.add_argument("session", type=int)
+    adopt.add_argument("symbol")
+    adopt.add_argument("qty", type=int)
+    limits = strategies.add_parser("limits")
+    limits.add_argument("--budget", type=float)
+    limits.add_argument("--cap", type=float)
+    jobs.add_parser("health")
+    jobs.add_parser("cancel").add_argument("id")
+    scheduler = groups.add_parser("scheduler").add_subparsers(dest="action", required=True)
+    scheduler.add_parser("work").add_argument("--once", action="store_true")
+    for command in (create, refresh_dataset, experiments.choices["run"], experiments.choices["sweep"], notebook, refresh):
+        command.add_argument("--wait", action="store_true")
     return root
 
 
@@ -71,6 +114,11 @@ def initialize():
 
 def prepare(args):
     values = vars(args).copy()
+    values.pop("wait", None)
+    if args.group == "strategies" and args.action == "activate":
+        values["scheduled"] = not values.pop("manual", False)
+    if args.group == "strategies" and args.action == "recipe":
+        values["recipe"] = json.loads(Path(args.recipe).read_text())
     if args.group == "experiments":
         values["config"] = json.loads(Path(args.config).read_text())
     if args.group in ("strategies", "notebooks") and args.action in ("register", "run"):
@@ -84,98 +132,9 @@ def prepare(args):
 
 
 def dispatch(values, agent=False):
-    group, action = values["group"], values.get("action")
-    from research import services
-    from research.models import Dataset, Experiment, Job, StrategyVersion
-    if group == "methods":
-        from strategies.catalog import catalog
-        return catalog()
-    if group == "datasets":
-        if action == "list":
-            return list(Dataset.objects.values("id", "name", "digest", "manifest"))
-        if agent:
-            raise ValueError("Agents may list operator-frozen datasets only")
-        if action == "demo":
-            import numpy as np
-            import pandas as pd
-            rng = np.random.default_rng(values["seed"])
-            frame = pd.DataFrame(100*np.exp(np.cumsum(rng.normal(.0003, .012, (630, 6)), axis=0)), index=pd.bdate_range("2022-01-03", periods=630), columns=["SPY", "QQQ", "AGG", "GLD", "TLT", "EFA"])
-            dataset = services.freeze_frame(frame, "SYNTHETIC demonstration", "Synthetic seeded independent Gaussian daily log returns")
-        else:
-            dataset = services.freeze_prices([t.upper() for t in values["tickers"]], values["name"])
-        return {"dataset": dataset.pk, "digest": dataset.digest, "manifest": dataset.manifest}
-    if group == "data":
-        if agent:
-            raise ValueError("Only the operator refreshes market data")
-        from django.core.management import call_command
-        out, err = io.StringIO(), io.StringIO()
-        options = {key: values[key] for key in ("start", "end") if values.get(key)}
-        call_command("refresh_prices", *values["tickers"], stdout=out, stderr=err, **options)
-        return {"status": "refreshed", "messages": out.getvalue().splitlines(), "diagnostics": err.getvalue().splitlines()}
-    if group == "strategies":
-        if action == "list":
-            return list(StrategyVersion.objects.values("name", "digest"))
-        strategy = services.register_strategy(values["name"], values["source"])
-        return {"name": strategy.name, "digest": strategy.digest}
-    if group == "experiments":
-        configs = values["config"] if action == "sweep" else [values["config"]]
-        if not isinstance(configs, list) or not 1 <= len(configs) <= 12:
-            raise ValueError("A sweep must contain 1–12 experiment configs")
-        if agent and Job.objects.filter(status__in=["queued", "running"]).count() + len(configs) > 24:
-            raise ValueError("Agent queue limit reached; wait for existing jobs")
-        if agent:
-            from django.utils import timezone
-            if Experiment.objects.filter(created_at__date=timezone.localdate()).count() + len(configs) > 24:
-                raise ValueError("Daily research budget of 24 trials reached")
-        return [services.queue_experiment(config, agent) for config in configs]
-    if group == "notebooks":
-        if agent and Job.objects.filter(status__in=["queued", "running"]).count() >= 24:
-            raise ValueError("Agent queue limit reached")
-        if agent:
-            from django.utils import timezone
-            if Job.objects.filter(kind="notebook", created_at__date=timezone.localdate()).count() >= 4:
-                raise ValueError("Daily notebook budget of four jobs reached")
-        return services.queue_notebook(values["dataset"], json.loads(values["source"]))
-    if group == "jobs":
-        from research.jobs import public_job, work
-        if action == "work":
-            if agent:
-                raise ValueError("Only the trusted operator starts workers")
-            return work(values["once"])
-        if values.get("id"):
-            return public_job(Job.objects.get(pk=values["id"]))
-        return [public_job(job) for job in Job.objects.order_by("-created_at")[:24]]
-    if group == "runs":
-        def summary(run):
-            return {"id": str(run.pk), "dataset": run.dataset_id, "method": run.config.get("method"), "status": run.status, "metrics": run.results.get("metrics", {}), "error": run.error}
-        if action == "list":
-            query = Experiment.objects.exclude(config__window="holdout") if agent else Experiment.objects.all()
-            return [summary(run) for run in query[:50]]
-        if action == "compare":
-            if len(values["ids"]) > 20:
-                raise ValueError("Compare at most 20 runs")
-            runs = [Experiment.objects.get(pk=key) for key in values["ids"]]
-            if agent and any(run.config.get("window") == "holdout" for run in runs):
-                raise ValueError("Holdout results are reserved for the operator")
-            return [summary(run) for run in runs]
-        run = Experiment.objects.get(pk=values["id"])
-        if agent and run.config.get("window") == "holdout":
-            raise ValueError("Holdout results are reserved for the operator")
-        return dict(summary(run), config=run.config, provenance=run.provenance, results=run.results)
-    if group == "reports":
-        from research.reporting import report
-        run = Experiment.objects.get(pk=values["id"])
-        if agent and run.config.get("window") == "holdout":
-            raise ValueError("Holdout results are reserved for the operator")
-        return {"markdown": report(run)}
-    if group == "paper":
-        from paper.services import status, tick
-        if action == "status":
-            return status()
-        if agent:
-            raise ValueError("Agents cannot execute or approve paper orders")
-        return tick(values["session"])
-    raise ValueError("Unsupported command")
+    # Deprecated argument retained for callers; every authorized client is equal.
+    from research.commands import dispatch as application_command
+    return application_command(values)
 
 
 def remote(path, values):
@@ -197,7 +156,19 @@ def main():
     args = parser().parse_args()
     try:
         values = prepare(args)
-        if os.getenv("LAB_SOCKET"):
+        service_command = args.group in {"app", "serve", "scheduler"} or args.group == "jobs" and args.action == "work"
+        if service_command:
+            initialize()
+            if args.group == "app":
+                from portfolio_lab.app import run
+                run(args.port)
+                return
+            if args.group == "serve":
+                from research.rpc import serve
+                serve(args.socket)
+                return
+            result = dispatch(values)
+        elif os.getenv("LAB_SOCKET"):
             result = remote(os.environ["LAB_SOCKET"], values)
         else:
             initialize()
@@ -207,6 +178,19 @@ def main():
                 return
             with contextlib.redirect_stdout(sys.stderr):
                 result = dispatch(values)
+        if getattr(args, "wait", False):
+            import time
+            items = result if isinstance(result, list) else [result]
+            done = []
+            for item in items:
+                while True:
+                    query = {"group": "jobs", "action": "status", "id": item["job_id"]}
+                    value = remote(os.environ["LAB_SOCKET"], query) if os.getenv("LAB_SOCKET") else dispatch(query)
+                    if value["status"] in {"succeeded", "failed", "canceled"}: break
+                    time.sleep(1)
+                if value["status"] != "succeeded": raise ValueError(value["error"] or value["status"])
+                done.append(value)
+            result = done
         if args.group == "reports":
             Path(args.output).write_text(result["markdown"])
             result = {"output": str(Path(args.output).resolve())}

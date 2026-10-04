@@ -12,3 +12,5 @@ artifacts/
 !.env.example
 !.env.paper.example
 .dockerignore.tmp
+.server-backup/
+staticfiles/

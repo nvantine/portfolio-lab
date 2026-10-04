@@ -16,6 +16,7 @@ class PaperSession(models.Model):
     slot = models.PositiveSmallIntegerField(default=1, editable=False)
     target_month = models.CharField(max_length=7, blank=True)
     targets = models.JSONField(default=dict)
+    desired_shares = models.JSONField(default=dict)
     scheduled = models.BooleanField(default=False)
     state = models.CharField(max_length=16, default="paused")
     holdings = models.JSONField(default=dict)

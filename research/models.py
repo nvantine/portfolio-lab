@@ -22,6 +22,9 @@ class StrategyVersion(models.Model):
     kind = models.CharField(max_length=12, default="python")
     recipe = models.JSONField(default=dict)
 
+    def __str__(self):
+        return f"{self.name} · {self.kind} · {self.digest[:10]}"
+
 
 class Experiment(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

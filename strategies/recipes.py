@@ -24,6 +24,8 @@ def validate_recipe(recipe):
         raise ValueError("This allocator/overlay does not support signed research")
     if allocator in {"fixed_weights", "tracking_error"} and not parameters.get("fixed_weights" if allocator == "fixed_weights" else "benchmark_weights"):
         raise ValueError("Supply explicit fixed or benchmark weights")
+    if allocator in {"max_sharpe", "max_diversification", "fixed_weights"} and (parameters.get("turnover_limit") is not None or parameters.get("turnover_penalty_bps", 0)):
+        raise ValueError("This allocator does not support turnover constraints/penalties")
 
 
 def forecast(prices, returns, signal, parameters):

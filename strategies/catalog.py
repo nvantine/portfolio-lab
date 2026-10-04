@@ -1,5 +1,6 @@
 """The visible method catalog: every strategy has a formula and assumptions."""
 METHODS = {
+    "custom": (r"w=f(\text{available history},w_{current},\theta)", "Registered Python defines the strategy; inspect its source and assumptions."),
     "recipe": (r"\text{signal}\to\text{risk model}\to\text{allocator}\to\text{overlay}", "Compatible, explicitly recorded components; no automatic claim of optimality."),
     "fixed_weights": (r"w=w_{user}", "User-specified allocations; unallocated wealth remains in cash."),
     "tracking_error": (r"\min_w(w-b)^T\Sigma(w-b)", "Tracking error relative to explicit asset benchmark weights."),

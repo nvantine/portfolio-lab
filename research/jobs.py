@@ -16,7 +16,17 @@ def heartbeat(name, **details):
 
 def health():
     now = timezone.now()
-    return {item.name: {"available": (now - item.updated_at).total_seconds() < 90, "updated_at": item.updated_at.isoformat(), **item.details} for item in ServiceHeartbeat.objects.all()}
+    result = {item.name: {"available": (now - item.updated_at).total_seconds() < 90, "updated_at": item.updated_at.isoformat(), **item.details} for item in ServiceHeartbeat.objects.all()}
+    for name in ("worker", "scheduler"):
+        path = settings.LAB_DATA_DIR / f"{name}.lock"
+        if name in result and path.exists():
+            with path.open("r") as handle:
+                try: fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError: result[name]["available"] = True
+                else:
+                    result[name]["available"] = False
+                    fcntl.flock(handle, fcntl.LOCK_UN)
+    return result
 from research.services import run_experiment, materialize
 
 

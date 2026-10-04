@@ -72,6 +72,7 @@ def register_strategy(name, source):
 def register_recipe(name, recipe):
     from strategies.recipes import validate_recipe
     validate_recipe(recipe)
+    validate_config({"dataset": 1, "parameters": recipe.get("parameters", {})})
     if not name or len(name) > 120:
         raise ValueError("Supply a short strategy name")
     value, _ = StrategyVersion.objects.get_or_create(digest=digest({"recipe": recipe}), defaults={"name": name, "source": "", "kind": "recipe", "recipe": recipe})
@@ -155,6 +156,15 @@ def queue_experiment(config, agent=False):
     dataset = Dataset.objects.get(pk=config["dataset"])
     materialize(dataset)
     strategy = StrategyVersion.objects.get(digest=config["strategy"]) if config.get("strategy") else None
+    if strategy and strategy.kind == "recipe":
+        if strategy.digest != digest({"recipe": strategy.recipe}): raise ValueError("Recipe integrity check failed")
+        config["method"] = "recipe"
+        config["parameters"] = strategy.recipe.get("parameters", {}) | config["parameters"] | {"recipe": strategy.recipe}
+        config = validate_config(config)
+    if config["method"] == "recipe" and not config["parameters"].get("recipe") and not strategy:
+        raise ValueError("Select a saved recipe or provide recipe components")
+    if strategy and strategy.kind == "python": config["method"] = "custom"
+    if config["method"] == "custom" and not strategy: raise ValueError("Custom method requires a registered Python version")
     run = Experiment.objects.create(dataset=dataset, strategy=strategy, config=config, hypothesis=config.get("hypothesis", ""), provenance=provenance())
     job = Job.objects.create(kind="experiment", experiment=run, payload={})
     return {"job_id": str(job.pk), "run_id": str(run.pk), "status": job.status}
@@ -166,7 +176,9 @@ def run_experiment(run):
     config = validate_config(run.config)
     parameters = dict(config["parameters"], method=config["method"])
     if run.strategy and run.strategy.kind == "recipe":
-        parameters = dict(run.strategy.recipe.get("parameters", {}), **config["parameters"], recipe=run.strategy.recipe, method="recipe")
+        if run.strategy.digest != digest({"recipe": run.strategy.recipe}): raise ValueError("Recipe integrity check failed")
+        parameters = run.strategy.recipe.get("parameters", {}) | config["parameters"] | {"recipe": run.strategy.recipe, "method": "recipe"}
+        parameters.pop("method")
         parameters = validate_config(dict(config, parameters=parameters))["parameters"] | {"method": "recipe"}
     start = run.dataset.manifest["train_end"] if config["window"] == "validation" else run.dataset.manifest["validation_end"]
     end = run.dataset.manifest["validation_end"] if config["window"] == "validation" else len(prices)

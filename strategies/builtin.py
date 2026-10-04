@@ -76,6 +76,7 @@ def target_weights(history, current_weights, parameters):
         from strategies.recipes import target_weights as recipe_weights
         return recipe_weights(history, current_weights, parameters)
     method = parameters.get("method", "min_variance")
+    if method == "custom": raise ValueError("Custom method requires a registered Python version")
     if method == "recipe": raise ValueError("Select a saved recipe or supply recipe components")
     if method not in METHODS: raise ValueError("Unknown strategy method")
     cap = parameters.get("cap", .2)

@@ -23,6 +23,7 @@ document.addEventListener("DOMContentLoaded", () => {
           } else {
             const dialog = document.createElement("dialog");
             dialog.className = "chart-dialog";
+            dialog.setAttribute("aria-label", figure.layout.title?.text || "Expanded chart");
             const close = document.createElement("button");
             close.textContent = "Close";
             dialog.append(close, element);
@@ -44,6 +45,23 @@ document.addEventListener("DOMContentLoaded", () => {
         });
       });
     }
+  });
+  let syncing = false;
+  document.querySelectorAll(".chart").forEach(element => {
+    // newPlot is asynchronous; attach handlers after rendering is complete.
+    const attach = () => {
+      if (!element.on) { setTimeout(attach, 100); return; }
+      element.on("plotly_relayout", event => {
+        if (syncing || !element.layout?.meta?.sync_time) return;
+        let update;
+        if (event["xaxis.range[0]"] !== undefined) update = {"xaxis.range": [event["xaxis.range[0]"], event["xaxis.range[1]"]]};
+        else if (event["xaxis.autorange"]) update = {"xaxis.autorange": true};
+        else return;
+        syncing = true;
+        Promise.all([...document.querySelectorAll(".chart")].filter(other => other !== element && other.layout?.meta?.sync_time).map(other => Plotly.relayout(other, update))).finally(() => { syncing = false; });
+      });
+    };
+    if (window.Plotly) attach();
   });
   document.querySelectorAll("form[data-confirm]").forEach(form => {
     form.addEventListener("submit", event => { if (!confirm(form.dataset.confirm)) event.preventDefault(); });
