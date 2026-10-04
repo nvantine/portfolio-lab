@@ -63,8 +63,9 @@ document.addEventListener("DOMContentLoaded", () => {
     };
     if (window.Plotly) attach();
   });
-  document.querySelectorAll("form[data-confirm]").forEach(form => {
-    form.addEventListener("submit", event => { if (!confirm(form.dataset.confirm)) event.preventDefault(); });
+  document.addEventListener("submit", event => {
+    const form = event.target;
+    if (form.matches("form[data-confirm]") && !confirm(form.dataset.confirm)) event.preventDefault();
   });
   const picker = document.getElementById("comparison-picker");
   if (picker) picker.addEventListener("submit", () => {
@@ -73,13 +74,16 @@ document.addEventListener("DOMContentLoaded", () => {
   document.querySelectorAll("[data-job-status]").forEach(element => {
     const poll = async () => {
       try {
-        const response = await fetch(element.dataset.jobStatus);
-        if (!response.ok) throw new Error("Unavailable");
+        const response = await fetch(element.dataset.jobStatus, {cache: "no-store"});
+        if (!response.ok || response.redirected) throw new Error("Unavailable");
         const value = await response.json();
-        element.textContent = `${value.status}${value.health.worker?.available ? "" : " · worker unavailable"}`;
-        if (["succeeded", "failed", "canceled"].includes(value.status)) location.reload();
-        else setTimeout(poll, 2000);
-      } catch (_) { element.textContent = "Unable to read job status. Refresh to retry."; }
+        element.textContent = `${value.status}${value.health?.worker?.available ? "" : " · worker unavailable"}`;
+        if (["succeeded", "failed", "canceled"].includes(value.status)) {
+          window.location.replace(window.location.href);
+          return;
+        }
+      } catch (_) { element.textContent = "Unable to read job status. Retrying automatically…"; }
+      setTimeout(poll, 2000);
     };
     poll();
   });

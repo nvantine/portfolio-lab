@@ -1,6 +1,31 @@
 {% extends 'portfolio/base.html' %}{% load presentation %}{% block content %}
-<h2>Datasets</h2><p>Choose stocks, ETFs, dates, and feed. Fetch first, review coverage, then accept a frozen snapshot. SIP requires your Alpaca entitlement.</p>
-<form method="post">{% csrf_token %}{{ form.as_p }}<button>Fetch and preview</button></form><p>ETF preset: <code>{{ preset }}</code></p>
+<h2>Datasets</h2>
+<p>1. Enter ticker symbols and fetch prices. 2. Review coverage. 3. Save the snapshot to use it in Research.</p>
+<p>Today is allowed: only completed prior days are fetched. SIP requires your Alpaca entitlement.</p>
+{% if form.errors %}<section class="note" id="dataset-errors" role="alert" tabindex="-1"><h3>Dataset was not queued</h3><ul>{% for field, errors in form.errors.items %}{% for error in errors %}<li>{% if field != '__all__' %}<a href="#id_{{ field }}">{{ field|title }}</a>: {% endif %}{{ error }}</li>{% endfor %}{% endfor %}</ul></section>{% endif %}
+<form method="post" id="dataset-create">{% csrf_token %}{{ form.as_p }}<button>Fetch and preview</button></form><p>ETF preset: <code>{{ preset }}</code></p>
 <form method="post">{% csrf_token %}<input type="hidden" name="action" value="demo"><button>Create synthetic demonstration</button></form>
-<h3>Fetch jobs</h3>{% for job in jobs %}<section><p>{{ job.pk }} · {{ job.status }} · {{ job.error }}</p>{% if job.status == 'queued' or job.status == 'running' %}<p data-job-status="{% url 'job-status' job.pk %}">Processing…</p>{% endif %}{% if job.status == 'succeeded' %}{{ job.result.coverage|pretty }}{{ job.result.failures|pretty }}<p>{{ job.result.aligned_rows }} common dates; {{ job.result.lost_dates }} dates lost.</p><form method="post">{% csrf_token %}<input type="hidden" name="action" value="accept"><input type="hidden" name="id" value="{{ job.pk }}"><label><input type="checkbox" name="accept_reduced">Accept exclusions and lost dates shown above</label><button>Save dataset snapshot</button></form>{% endif %}</section>{% endfor %}
-<h3>Saved datasets</h3>{% for dataset in datasets %}<details><summary>{{ dataset }}</summary>{{ dataset.manifest|pretty }}<pre>{{ dataset.digest }}</pre><form method="post">{% csrf_token %}<input type="hidden" name="action" value="refresh"><input type="hidden" name="id" value="{{ dataset.pk }}"><button>Fetch updated version</button></form></details>{% endfor %}{% endblock %}
+<p data-live-feedback role="status">Fetch status and saved datasets update automatically.</p>
+<div data-live-region="datasets">
+{% if not health.worker.available %}<p class="note">Queue worker unavailable. Fetches will stay queued. Start the app services or run <code>uv run portfolio-lab jobs work</code>.</p>{% endif %}
+<h3 id="fetch-jobs">Fetch jobs and previews</h3>
+{% for job in jobs %}<section id="fetch-{{ job.pk }}">
+<h4>{{ job.payload.name }} · {{ job.status }}</h4>
+<p>{{ job.payload.tickers|length }} selected symbols · {{ job.payload.start }} through {{ job.payload.end }} · {{ job.payload.feed|upper }}</p>
+{% if job.error %}<p role="alert">{{ job.error }}</p>{% endif %}
+{% if job.status == 'queued' %}<p>Waiting for the queue worker. This is not a saved dataset yet.</p>{% endif %}
+{% if job.status == 'running' %}<p>Fetching prices{% if job.result.progress %}: {{ job.result.progress.completed }}/{{ job.result.progress.total }} symbols completed · {{ job.result.progress.current }}{% endif %}…</p>{% endif %}
+{% if job.status == 'succeeded' %}
+{% if job.result.accepted_dataset %}<p>Saved as snapshot {{ job.result.accepted_dataset }}. <a href="{% url 'home' %}">Use it in Research</a>.</p>
+{% else %}<p class="note">Preview ready — review coverage below, then save it to create the dataset.</p>{% endif %}
+<details id="coverage-{{ job.pk }}"><summary>Review symbol coverage and exclusions</summary>{{ job.result.coverage|pretty }}{{ job.result.failures|pretty }}</details>
+<p>{{ job.result.aligned_rows }} common trading sessions; {{ job.result.lost_dates }} dates lost. Saving requires at least 250 common sessions.</p>
+{% if not job.result.accepted_dataset %}
+{% if job.result.aligned_rows >= 250 %}<form method="post">{% csrf_token %}<input type="hidden" name="action" value="accept"><input type="hidden" name="id" value="{{ job.pk }}"><label><input id="accept-{{ job.pk }}" type="checkbox" name="accept_reduced">I reviewed and accept any exclusions and lost dates shown above</label><button>Save dataset snapshot</button></form>
+{% else %}<p role="alert">Not enough common history. Fetch a longer date range or remove assets with short histories.</p>{% endif %}
+{% endif %}{% endif %}
+<details id="job-id-{{ job.pk }}"><summary>Job ID</summary><code>{{ job.pk }}</code></details>
+</section>{% empty %}<p>No fetches yet. Submit the form above to queue one.</p>{% endfor %}
+<h3 id="saved-datasets">Saved datasets</h3>
+{% for dataset in datasets %}<details id="dataset-{{ dataset.pk }}"><summary>{{ dataset }} · {{ dataset.manifest.aligned_rows }} sessions</summary>{{ dataset.manifest|pretty }}<pre>{{ dataset.digest }}</pre><form method="post">{% csrf_token %}<input type="hidden" name="action" value="refresh"><input type="hidden" name="id" value="{{ dataset.pk }}"><button>Fetch updated version</button></form></details>{% empty %}<p>No saved snapshots yet. A completed fetch must be reviewed and saved first.</p>{% endfor %}
+</div>{% endblock %}

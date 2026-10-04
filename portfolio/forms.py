@@ -4,9 +4,9 @@ from strategies.catalog import METHODS, COVARIANCES
 
 
 class ExperimentForm(forms.Form):
-    dataset = forms.ModelChoiceField(queryset=Dataset.objects.all())
+    dataset = forms.ModelChoiceField(queryset=Dataset.objects.all(), widget=forms.Select(attrs={"data-live-options": ""}))
     method = forms.ChoiceField(choices=[(name, name) for name in METHODS])
-    strategy = forms.ModelChoiceField(queryset=StrategyVersion.objects.all(), required=False, help_text="Optional saved Python or recipe version; overrides the method selection.")
+    strategy = forms.ModelChoiceField(queryset=StrategyVersion.objects.all(), required=False, widget=forms.Select(attrs={"data-live-options": ""}), help_text="Optional saved Python or recipe version; overrides the method selection.")
     covariance = forms.ChoiceField(choices=[(name, name) for name in COVARIANCES], initial="ledoit_wolf")
     lookback = forms.IntegerField(min_value=10, max_value=2520, initial=126)
     cap = forms.FloatField(min_value=.01, max_value=1, initial=.2)
@@ -42,11 +42,22 @@ class ExperimentForm(forms.Form):
 
 class DatasetForm(forms.Form):
     name = forms.CharField(max_length=120)
-    tickers = forms.CharField(widget=forms.Textarea(attrs={"rows": 3}), help_text="Space/comma-separated stocks and ETFs; or use the ETF preset below.")
-    start = forms.DateField(widget=forms.DateInput(attrs={"type": "date"}))
-    end = forms.DateField(widget=forms.DateInput(attrs={"type": "date"}))
+    tickers = forms.CharField(widget=forms.Textarea(attrs={"rows": 3}), help_text="Paste actual ticker symbols, e.g. AAPL, MSFT, NVDA. Descriptions such as 'top 100 Nasdaq by market cap' are not a ticker list.")
+    start = forms.DateField(widget=forms.DateInput(format="%Y-%m-%d", attrs={"type": "date"}), help_text="Use at least a year of prices; saving requires 250 common trading sessions.")
+    end = forms.DateField(widget=forms.DateInput(format="%Y-%m-%d", attrs={"type": "date"}), help_text="Today is allowed; incomplete current-day bars are excluded automatically.")
     feed = forms.ChoiceField(choices=[("iex", "IEX — free account default"), ("sip", "SIP — requires entitlement")])
     benchmark = forms.CharField(required=False, initial="SPY")
+
+    def clean_tickers(self):
+        from research.datasets import symbols
+        try: return symbols(self.cleaned_data["tickers"])
+        except ValueError as exc: raise forms.ValidationError(str(exc)) from None
+
+    def clean_benchmark(self):
+        from research.datasets import symbols
+        value = self.cleaned_data["benchmark"]
+        try: return symbols([value])[0] if value else ""
+        except ValueError as exc: raise forms.ValidationError(str(exc)) from None
 
 
 class RecipeForm(forms.Form):

@@ -7,6 +7,7 @@ urlpatterns = [
     path("results/", views.results, name="results"),
     path("compare/", views.compare, name="compare"),
     path("datasets/", views.datasets_page, name="datasets"),
+    path("activity/status/", views.activity_status, name="activity-status"),
     path("strategies/", views.strategies_page, name="strategies"),
     path("runs/<uuid:key>/", views.results, name="run"),
     path("runs/<uuid:key>/<str:action>/", views.run_action, name="run-action"),

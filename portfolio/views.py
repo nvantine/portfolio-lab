@@ -12,6 +12,7 @@ from research.services import queue_experiment
 from research.reporting import report, safe_markdown
 from strategies.catalog import catalog, METHODS
 from paper.models import PaperSession
+from portfolio.activity import activity_state, live_context
 
 operator = user_passes_test(lambda user: user.is_authenticated and user.is_staff)
 
@@ -28,8 +29,7 @@ def home(request):
             form.add_error(None, str(exc))
     trash = request.GET.get("trash") == "1"
     query = Experiment.objects.filter(trashed_at__isnull=not trash)
-    from research.jobs import health
-    return render(request, "portfolio/home.html", {"form": form, "datasets": Dataset.objects.all(), "runs": query[:100], "trash": trash, "health": health(), "methods": catalog(), "jobs": Job.objects.order_by("-created_at")[:12]})
+    return render(request, "portfolio/home.html", {"form": form, "datasets": Dataset.objects.all(), "runs": query[:100], "trash": trash, "methods": catalog(), "jobs": Job.objects.order_by("-created_at")[:12], **live_context("research")})
 
 
 @operator
@@ -50,19 +50,33 @@ def datasets_page(request):
     from portfolio.forms import DatasetForm
     from research.commands import dispatch
     from marketdata.universe import DEFAULT_ETFS
-    form = DatasetForm(request.POST or None)
+    from datetime import timedelta
+    from django.utils import timezone
+    action = request.POST.get("action", "create")
+    today = timezone.localdate()
+    form = DatasetForm(request.POST if request.method == "POST" and action == "create" else None, initial={"start": today - timedelta(days=365*5), "end": today, "feed": "iex"})
     outcome = None
+    status = 200
     if request.method == "POST":
         try:
-            action = request.POST.get("action", "create")
             if action == "create" and form.is_valid():
                 outcome = dispatch(dict(form.cleaned_data, group="datasets", action="create"), user=request.user)
             elif action in {"accept", "refresh", "demo"}:
                 outcome = dispatch({"group": "datasets", "action": action, "id": request.POST.get("id"), "accept_reduced": request.POST.get("accept_reduced") == "on"}, user=request.user)
-            if outcome: messages.success(request, f"Dataset action: {outcome.get('job_id') or outcome.get('dataset')}")
+            elif action != "create":
+                raise ValueError("Unknown dataset action")
+            if outcome:
+                if "job_id" in outcome:
+                    messages.success(request, f"Fetch queued for {outcome['symbols']} symbols through {outcome['end']}. Review the preview below when it finishes, then click Save dataset snapshot.")
+                    return redirect("/datasets/#fetch-jobs")
+                messages.success(request, f"Dataset snapshot {outcome['dataset']} saved. It is available in Research.")
+                return redirect("/datasets/#saved-datasets")
+            status = 400
         except ValueError as exc:
-            messages.error(request, str(exc))
-    return render(request, "portfolio/datasets.html", {"form": form, "datasets": Dataset.objects.all(), "jobs": Job.objects.filter(kind="dataset").order_by("-created_at")[:30], "preset": " ".join(DEFAULT_ETFS)})
+            if action == "create": form.add_error(None, str(exc))
+            else: messages.error(request, str(exc))
+            status = 400
+    return render(request, "portfolio/datasets.html", {"form": form, "datasets": Dataset.objects.all(), "jobs": Job.objects.filter(kind="dataset").order_by("-created_at")[:30], "preset": " ".join(DEFAULT_ETFS), **live_context("datasets")}, status=status)
 
 
 @operator
@@ -79,17 +93,26 @@ def strategies_page(request):
                 name = data.pop("name")
                 dispatch({"group": "strategies", "action": "recipe", "name": name, "recipe": data}, user=request.user)
                 messages.success(request, "Recipe version registered. Select it in Research to run an experiment.")
+                return redirect("strategies")
             elif action in {"register", "notebook"}:
                 upload = request.FILES.get("source")
                 if upload and upload.size > 1_000_000: raise ValueError("Source exceeds 1 MB")
                 source = upload.read().decode("utf-8") if upload else request.POST.get("source", "")
                 command = {"group": "strategies", "action": "register", "source": source, "name": request.POST.get("name", "")}
                 if action == "notebook": command = {"group": "notebooks", "action": "run", "source": source, "dataset": int(request.POST["dataset"])}
-                dispatch(command, user=request.user)
+                outcome = dispatch(command, user=request.user)
                 messages.success(request, "Source registered/submitted. Notebook results appear under Jobs.")
+                if action == "notebook": return redirect("notebook", key=outcome["job_id"])
+                return redirect("strategies")
         except (ValueError, UnicodeError) as exc:
             messages.error(request, str(exc))
-    return render(request, "portfolio/strategies.html", {"form": form, "strategies": StrategyVersion.objects.all(), "datasets": Dataset.objects.all()})
+    return render(request, "portfolio/strategies.html", {"form": form, "strategies": StrategyVersion.objects.all(), "datasets": Dataset.objects.all(), "jobs": Job.objects.filter(kind="notebook").order_by("-created_at")[:12], **live_context("strategies")})
+
+
+@operator
+def activity_status(request):
+    try: return JsonResponse(activity_state(request.GET.get("scope", "datasets")), headers={"Cache-Control": "no-store"})
+    except ValueError: return JsonResponse({"error": "Unknown page scope"}, status=400)
 
 
 @operator
